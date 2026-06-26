@@ -1,0 +1,8 @@
+name: Wazuh Forwarder
+id: wazuh_forwarder
+version: 1.0.0
+author: Excalibur
+description: Forwards Excalibur alert events to Wazuh via local JSONL logs or TCP.
+entrypoint: plugin.py
+enabled: true
+

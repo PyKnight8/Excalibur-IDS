@@ -1,0 +1,8 @@
+name: AbuseIPDB
+id: abuseipdb
+version: 1.0.0
+author: Excalibur
+description: Looks up public alert IPs in AbuseIPDB and logs the response.
+entrypoint: plugin.py
+enabled: false
+

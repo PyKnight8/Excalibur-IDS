@@ -1,0 +1,18 @@
+[Unit]
+Description=Excalibur Dashboard Sensor Helper
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/Excalibur
+NoNewPrivileges=true
+RuntimeDirectory=excalibur
+RuntimeDirectoryMode=0750
+ExecStart=/opt/Excalibur/.venv/bin/python -m excalibur.helper.server
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

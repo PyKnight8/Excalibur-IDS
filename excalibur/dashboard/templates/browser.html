@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h3 page-title mb-1">Browser Threats</h1>
+    <div class="text-muted">{{ total_records }} matching risky domains</div>
+  </div>
+</div>
+
+<form class="filter-panel row g-3 mb-4" method="get" action="{{ url_for('domain_risk') }}">
+  <input type="hidden" name="sort_by" value="{{ sort_by }}">
+  <input type="hidden" name="sort_order" value="{{ sort_order }}">
+  <div class="col-md-6">
+    <label class="form-label" for="search">Search</label>
+    <input class="form-control" id="search" name="search" value="{{ search }}" placeholder="Domain or reason">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label" for="risk_level">Risk Level</label>
+    <select class="form-select" id="risk_level" name="risk_level">
+      <option value="">Any</option>
+      {% for level in ['Low', 'Medium', 'High'] %}
+      <option value="{{ level }}" {% if risk_level == level %}selected{% endif %}>{{ level }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 d-flex gap-2">
+    <button class="btn btn-primary" type="submit">Apply Filters</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('domain_risk') }}">Clear Filters</a>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table data-table table-striped table-hover align-middle">
+    <thead>
+      <tr>
+        {% for column, label in [
+          ('domain', 'Domain'),
+          ('risk_score', 'Score'),
+          ('risk_level', 'Risk'),
+          ('reasons', 'Reasons'),
+          ('first_seen', 'First Seen'),
+          ('last_seen', 'Last Seen'),
+          ('query_count', 'Query Count')
+        ] %}
+        {% if column == 'reasons' %}
+        <th>{{ label }}</th>
+        {% else %}
+        <th class="{% if sort_by == column %}active-sort{% endif %}">
+          <a class="sort-link {% if sort_by == column %}active{% endif %}" href="{{ sort_urls[column] }}">
+            <span>{{ label }}</span>
+            <span>{% if sort_by == column and sort_order == 'ASC' %}&uarr;{% else %}&darr;{% endif %}</span>
+          </a>
+        </th>
+        {% endif %}
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for domain in domains %}
+      <tr>
+        <td class="fw-semibold">{{ domain.domain }}</td>
+        <td>{{ domain.risk_score }}</td>
+        <td>
+          <span class="badge {% if domain.risk_level == 'High' %}severity-high{% elif domain.risk_level == 'Medium' %}severity-medium{% else %}severity-low{% endif %}">
+            {{ domain.risk_level }}
+          </span>
+        </td>
+        <td class="text-muted">{{ domain.reasons }}</td>
+        <td>{{ domain.first_seen|local_time }}</td>
+        <td>{{ domain.last_seen|local_time }}</td>
+        <td><span class="badge badge-protocol protocol-dns">{{ domain.query_count }}</span></td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="7" class="text-muted text-center">No risky domains found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Browser threat pagination">
+  <div class="text-muted">Page {{ page }} of {{ total_pages }}</div>
+  <ul class="pagination mb-0">
+    <li class="page-item {% if not has_previous %}disabled{% endif %}">
+      <a class="page-link" href="{{ previous_url if has_previous else '#' }}">Previous</a>
+    </li>
+    <li class="page-item {% if not has_next %}disabled{% endif %}">
+      <a class="page-link" href="{{ next_url if has_next else '#' }}">Next</a>
+    </li>
+  </ul>
+</nav>
+{% endblock %}

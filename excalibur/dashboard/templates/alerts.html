@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <h1 class="h3 page-title mb-0">Alerts</h1>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('export_alerts_csv') }}">Export CSV</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('export_alerts_json') }}">Export JSON</a>
+    <form method="post" action="{{ url_for('delete_all_alerts') }}" onsubmit="return confirm('Delete all alerts? This action cannot be undone.');">
+      <button class="btn btn-outline-secondary" type="submit">Clear All Alerts</button>
+    </form>
+  </div>
+</div>
+<div class="table-responsive">
+  <table class="table data-table table-striped table-hover align-middle">
+    <thead>
+      <tr>
+        <th>Timestamp</th>
+        <th>Severity</th>
+        <th>Rule</th>
+        <th>Source</th>
+        <th>Destination</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for alert in alerts %}
+      {% set severity_class = 'severity-' ~ alert.severity|lower if alert.severity|lower in ['low', 'medium', 'high'] else 'severity-default' %}
+      <tr>
+        <td>{{ alert.timestamp|local_time }}</td>
+        <td><span class="badge badge-severity {{ severity_class }}">{{ alert.severity }}</span></td>
+        <td><a class="text-decoration-none" href="{{ url_for('alert_detail', alert_id=alert.id) }}">{{ alert.title }}</a></td>
+        <td>{{ alert.source_ip or "-" }}</td>
+        <td>{{ alert.destination_ip or "-" }}</td>
+        <td>
+          <div class="d-flex gap-2">
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('alert_detail', alert_id=alert.id) }}">Open</a>
+          <form method="post" action="{{ url_for('delete_alert', alert_id=alert.id) }}" onsubmit="return confirm('Are you sure? This action cannot be undone.');">
+            <button class="btn btn-sm btn-outline-secondary" type="submit">Delete</button>
+          </form>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6" class="text-muted text-center">No alerts found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

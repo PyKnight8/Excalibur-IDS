@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h3 page-title mb-1">Plugin Management</h1>
+    <div class="text-muted">Installed plugins and lightweight enable or disable controls</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('plugins') }}">Reload</a>
+</div>
+
+{% if updated %}
+<div class="alert alert-success d-flex flex-wrap justify-content-between align-items-center gap-3" id="plugin-update-message">
+  <div>Plugin updated. Restart sensor for changes to take effect.</div>
+  <button class="btn btn-warning btn-sm" id="restart-sensor-button" type="button">Restart Sensor</button>
+</div>
+{% endif %}
+
+<section class="panel p-3 mb-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <div class="text-muted small">Sensor Status</div>
+      <div class="h5 mb-0" id="sensor-status-value">Checking...</div>
+    </div>
+    <div id="sensor-control-message" class="small"></div>
+  </div>
+</section>
+
+<section class="panel p-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h2 class="h5 page-title mb-1">Installed Plugins</h2>
+      <div class="text-muted">Status is read from each plugin's plugin.yaml metadata.</div>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table data-table table-striped table-hover align-middle">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>ID</th>
+          <th>Version</th>
+          <th>Author</th>
+          <th>Description</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for plugin in plugins %}
+        <tr>
+          <td>{{ plugin.name }}</td>
+          <td><code>{{ plugin.id }}</code></td>
+          <td>{{ plugin.version or "-" }}</td>
+          <td>{{ plugin.author or "-" }}</td>
+          <td>{{ plugin.description or "-" }}</td>
+          <td>
+            {% if plugin.enabled %}
+            <span class="badge text-bg-success">Enabled</span>
+            {% else %}
+            <span class="badge text-bg-secondary">Disabled</span>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('toggle_plugin', plugin_id=plugin.id) }}">
+              {% if plugin.enabled %}
+              <button class="btn btn-sm btn-outline-warning" type="submit">Disable</button>
+              {% else %}
+              <button class="btn btn-sm btn-outline-success" type="submit">Enable</button>
+              {% endif %}
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-muted text-center">No plugins found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(() => {
+  const sensorStatusValue = document.getElementById("sensor-status-value");
+  const sensorControlMessage = document.getElementById("sensor-control-message");
+  const restartSensorButton = document.getElementById("restart-sensor-button");
+
+  const setSensorMessage = (message, kind = "muted") => {
+    sensorControlMessage.className = `small text-${kind}`;
+    sensorControlMessage.textContent = message;
+  };
+
+  const loadSensorStatus = async () => {
+    try {
+      const response = await fetch("{{ url_for('sensor_status') }}");
+      const payload = await response.json();
+      const status = payload.status || "unknown";
+      if (status === "running") {
+        sensorStatusValue.textContent = "Running";
+        sensorStatusValue.className = "h5 mb-0 text-success";
+      } else if (status === "stopped") {
+        sensorStatusValue.textContent = "Stopped";
+        sensorStatusValue.className = "h5 mb-0 text-warning";
+      } else {
+        sensorStatusValue.textContent = "Unknown";
+        sensorStatusValue.className = "h5 mb-0 text-muted";
+      }
+    } catch (error) {
+      sensorStatusValue.textContent = "Unknown";
+      sensorStatusValue.className = "h5 mb-0 text-muted";
+    }
+  };
+
+  if (restartSensorButton) {
+    restartSensorButton.addEventListener("click", async () => {
+      const confirmed = window.confirm(
+        "Restarting the sensor will briefly pause packet capture.\n\nContinue?"
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setSensorMessage("Restarting sensor...", "warning");
+      try {
+        const response = await fetch("{{ url_for('sensor_restart') }}", {
+          method: "POST",
+          headers: {
+            "Accept": "application/json"
+          }
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.error || "Restart failed.");
+        }
+        setSensorMessage("Sensor restarted successfully.", "success");
+        await loadSensorStatus();
+      } catch (error) {
+        setSensorMessage(error.message, "danger");
+      }
+    });
+  }
+
+  loadSensorStatus();
+})();
+</script>
+{% endblock %}

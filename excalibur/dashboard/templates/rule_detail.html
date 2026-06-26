@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h3 page-title mb-1">{{ rule.name }}</h1>
+    <div class="text-muted">{{ selected_pack_label }} rule details</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('rules', pack=selected_pack) }}">Back to Rules</a>
+</div>
+
+<section class="panel p-3 mb-4">
+  <div class="row g-3">
+    <div class="col-md-4">
+      <div class="text-muted small">Severity</div>
+      <div><span class="badge severity-{{ rule.severity|lower }}">{{ rule.severity }}</span></div>
+    </div>
+    <div class="col-md-4">
+      <div class="text-muted small">Enabled</div>
+      <div class="fw-semibold">{{ "Yes" if rule.enabled else "No" }}</div>
+    </div>
+    <div class="col-md-4">
+      <div class="text-muted small">Cooldown</div>
+      <div class="fw-semibold">{{ rule.cooldown_seconds }} seconds</div>
+    </div>
+    <div class="col-md-4">
+      <div class="text-muted small">group_by</div>
+      <div class="fw-semibold">{{ rule.group_by or "Default" }}</div>
+    </div>
+    <div class="col-md-4">
+      <div class="text-muted small">Hits</div>
+      <div class="fw-semibold">{{ rule.hits }}</div>
+    </div>
+    <div class="col-md-4">
+      <div class="text-muted small">Alerts</div>
+      <div class="fw-semibold">{{ rule.alerts }}</div>
+    </div>
+    <div class="col-md-4">
+      <div class="text-muted small">Last Triggered</div>
+      <div class="fw-semibold">{{ rule.last_triggered|local_time if rule.last_triggered else "Never" }}</div>
+    </div>
+    <div class="col-md-8">
+      <div class="text-muted small">Tags</div>
+      {% if rule.tags %}
+        {% for tag in rule.tags %}
+        <span class="badge text-bg-secondary">{{ tag }}</span>
+        {% endfor %}
+      {% else %}
+      <div class="fw-semibold">None</div>
+      {% endif %}
+    </div>
+    <div class="col-12">
+      <div class="text-muted small">Description</div>
+      <div class="fw-semibold">{{ rule.description }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="panel p-3">
+  <h2 class="h5 page-title mb-3">Rule YAML</h2>
+  <textarea class="form-control font-monospace" rows="20" readonly>{{ rule_yaml }}</textarea>
+</section>
+{% endblock %}

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="h3 page-title mb-4">Port Scan Debug</h1>
+<div class="table-responsive">
+  <table class="table data-table table-striped table-hover align-middle">
+    <thead>
+      <tr>
+        <th>Source IP</th>
+        <th>Unique Destination Ports</th>
+        <th>Cooldown State</th>
+        <th>Last Alert Time</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for source in sources %}
+      <tr>
+        <td>{{ source.src_ip }}</td>
+        <td>{{ source.unique_port_count }}</td>
+        <td>
+          {% if source.in_cooldown %}
+          <span class="badge badge-severity severity-medium">In cooldown</span>
+          {% else %}
+          <span class="badge badge-severity severity-low">Ready</span>
+          {% endif %}
+        </td>
+        <td>{{ source.last_alert_time|local_time if source.last_alert_time else "" }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="4" class="text-muted text-center">No port scan state tracked yet.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

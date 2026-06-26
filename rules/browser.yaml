@@ -1,0 +1,96 @@
+signatures:
+  - name: Suspicious Browser TLD
+    enabled: true
+    event: dns
+    tags:
+      - browser
+      - dns
+      - phishing
+    group_by: src_ip
+    cooldown_seconds: 300
+    match:
+      query_name:
+        endswith_any:
+          - .zip
+          - .mov
+          - .top
+          - .xyz
+          - .click
+          - .icu
+          - .cyou
+          - .gq
+          - .tk
+          - .ml
+          - .cf
+    aggregate:
+      count:
+        gte: 1
+      within_seconds: 60
+    alert:
+      severity: Low
+      title: Suspicious Browser TLD
+      description: DNS query used a browser-risky top-level domain.
+  - name: Suspicious Browser Domain Keyword
+    enabled: false
+    event: dns
+    tags:
+      - browser
+      - dns
+      - phishing
+    group_by: src_ip
+    cooldown_seconds: 300
+    match:
+      query_name:
+        contains_any:
+          - login
+          - verify
+          - secure
+          - account
+          - update
+          - wallet
+          - reset
+    aggregate:
+      count:
+        gte: 1
+      within_seconds: 60
+    alert:
+      severity: Low
+      title: Suspicious Browser Domain Keyword
+      description: DNS query contained a browser credential or account keyword.
+  - name: DGA-like Browser Domain
+    enabled: true
+    event: dns
+    tags:
+      - browser
+      - dns
+      - dga
+    group_by: src_ip
+    cooldown_seconds: 300
+    match:
+      risk_score:
+        gte: 80
+    aggregate:
+      count:
+        gte: 1
+      within_seconds: 60
+    alert:
+      severity: High
+      title: DGA-like Browser Domain
+      description: DNS query reached a domain with high browser-threat risk characteristics.
+  - name: Excessive Browser Domain Fanout
+    enabled: true
+    event: dns
+    tags:
+      - browser
+      - dns
+      - fanout
+    group_by: src_ip
+    cooldown_seconds: 300
+    aggregate:
+      unique_domains:
+        gte: 50
+      within_seconds: 300
+    alert:
+      severity: Medium
+      title: Excessive Newly Seen Browser Domains
+      description: Client queried many unique domains in a short browser activity window.

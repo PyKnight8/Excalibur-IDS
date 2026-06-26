@@ -1,0 +1,171 @@
+signatures:
+  - name: MySQL Recon
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port: 3306
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: MySQL Recon Activity
+      description: Source contacted many MySQL database services.
+  - name: MSSQL Recon
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port: 1433
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: MSSQL Recon Activity
+      description: Source contacted many Microsoft SQL Server services.
+  - name: PostgreSQL Recon
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port: 5432
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: PostgreSQL Recon Activity
+      description: Source contacted many PostgreSQL database services.
+  - name: Oracle Database Recon
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port: 1521
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: Oracle Database Recon Activity
+      description: Source contacted many Oracle database services.
+  - name: Redis Recon
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port: 6379
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: Redis Recon Activity
+      description: Source contacted many Redis services.
+  - name: MongoDB Recon
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port: 27017
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: MongoDB Recon Activity
+      description: Source contacted many MongoDB services.
+  - name: Elasticsearch Recon
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port: 9200
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: Elasticsearch Recon Activity
+      description: Source contacted many Elasticsearch services.
+  - name: Cassandra Recon
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port: 9042
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: Cassandra Recon Activity
+      description: Source contacted many Cassandra database services.
+  - name: Database Service Sweep
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port:
+        in:
+          - 1433
+          - 1521
+          - 3306
+          - 5432
+          - 6379
+          - 9042
+          - 9200
+          - 27017
+    aggregate:
+      unique_dst_ips:
+        gte: 20
+      count:
+        gte: 40
+      within_seconds: 120
+    alert:
+      severity: High
+      title: Database Service Sweep
+      description: Source contacted many database services across multiple hosts.
+  - name: Database Port Enumeration
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      dst_port:
+        in:
+          - 1433
+          - 1521
+          - 3306
+          - 5432
+          - 6379
+          - 9042
+          - 9200
+          - 27017
+    aggregate:
+      unique_dst_ports:
+        gte: 5
+      within_seconds: 120
+    alert:
+      severity: Medium
+      title: Database Port Enumeration
+      description: Source probed multiple database service types.

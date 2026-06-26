@@ -1,0 +1,39 @@
+global:
+
+  exclude_own_ips: true
+  excluded_sources:
+    - 10.0.2.34 # Example... Change this if necessary
+
+rules:
+
+  - name: Port Scan
+    type: portscan
+    enabled: true
+    threshold: 2
+    window_seconds: 60
+    cooldown_seconds: 300
+    severity: Medium
+  
+  - name: DNS Flood
+    type: dns_flood
+    enabled: true
+    threshold: 500
+    window_seconds: 60
+    cooldown_seconds: 300
+    severity: Medium
+
+  - name: Excessive Unique Domains
+    type: unique_domains
+    enabled: true
+    threshold: 100
+    window_seconds: 60
+    cooldown_seconds: 300
+    severity: Medium
+
+  - name: Internal Host Sweep
+    type: host_sweep
+    enabled: true
+    threshold: 20
+    window_seconds: 60
+    cooldown_seconds: 300
+    severity: Medium

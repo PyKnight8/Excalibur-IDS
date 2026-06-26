@@ -1,0 +1,19 @@
+<service>
+  <id>ExcaliburHelper</id>
+  <name>Excalibur Helper</name>
+  <description>Excalibur Windows service-control helper.</description>
+  <executable>__PYTHON__</executable>
+  <arguments>-m excalibur.helper.windows_server</arguments>
+  <workingdirectory>__APP_DIR__</workingdirectory>
+  <env name="EXCALIBUR_APP_DIR" value="__APP_DIR__" />
+  <env name="EXCALIBUR_DATA_DIR" value="__DATA_DIR__" />
+  <env name="EXCALIBUR_LOG_DIR" value="__LOG_DIR__" />
+  <logpath>__LOG_DIR__</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <onfailure action="restart" delay="5 sec" />
+  <stoptimeout>10 sec</stoptimeout>
+  <startmode>Automatic</startmode>
+</service>

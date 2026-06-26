@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 class="h3 page-title mb-4">Hosts</h1>
+<div class="table-responsive">
+  <table class="table data-table table-striped table-hover align-middle">
+    <thead>
+      <tr>
+        <th>IP Address</th>
+        <th>MAC Address</th>
+        <th>First Seen</th>
+        <th>Last Seen</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for host in hosts %}
+      <tr>
+        <td>{{ host.ip_address }}</td>
+        <td>{{ host.mac_address or "" }}</td>
+        <td>{{ host.first_seen|local_time }}</td>
+        <td>{{ host.last_seen|local_time }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="4" class="text-muted text-center">No hosts found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

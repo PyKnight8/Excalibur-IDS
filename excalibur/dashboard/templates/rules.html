@@ -1,0 +1,607 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h3 page-title mb-1">Rule Management</h1>
+    <div class="text-muted">Rule packs, runtime statistics, and YAML validation</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('rules', pack=selected_pack) }}">Reload</a>
+</div>
+
+{% if saved or updated %}
+<div class="alert alert-success d-flex flex-wrap justify-content-between align-items-center gap-3" id="rule-save-message">
+  {% if updated %}
+  <div>Rule updated. Restart sensor for changes to take effect.</div>
+  {% else %}
+  <div>Rule pack saved. Restart sensor for rule changes to fully apply.</div>
+  {% endif %}
+  <button class="btn btn-warning btn-sm" id="restart-sensor-button" type="button">Restart Sensor</button>
+</div>
+{% endif %}
+{% if imported %}
+<div class="alert alert-success">Rule pack imported successfully.</div>
+{% endif %}
+
+{% if error %}
+<div class="alert alert-danger">
+  <div class="fw-semibold mb-1">&#10007; Validation failed</div>
+  <pre class="mb-0 text-light">{{ error }}</pre>
+</div>
+{% endif %}
+
+<section class="panel p-3 mb-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <div class="text-muted small">Sensor Status</div>
+      <div class="h5 mb-0" id="sensor-status-value">Checking...</div>
+    </div>
+    <div id="sensor-control-message" class="small"></div>
+  </div>
+</section>
+
+<section class="panel p-3 mb-4">
+  <div class="row g-3 align-items-stretch">
+    {% for pack in packs %}
+    <div class="col-md-6 col-xl">
+      <a class="text-decoration-none" href="{{ url_for('rules', pack=pack.name) }}">
+        <div class="card metric-card {% if pack.name == selected_pack %}metric-blue{% else %}bg-transparent border-secondary{% endif %} h-100">
+          <div class="card-body">
+            <div class="metric-label">{{ pack.label }}</div>
+            <div class="metric-value">{{ pack.count }}</div>
+            <div class="text-muted small">{{ "Rule" if pack.count == 1 else "Rules" }}</div>
+            {% if pack.error %}
+            <div class="text-danger small mt-2">Invalid YAML</div>
+            {% endif %}
+          </div>
+        </div>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel p-3 mb-4">
+  <div class="row g-3">
+    <div class="col-md-3">
+      <div class="text-muted small">Total Rules</div>
+      <div class="h4 mb-0">{{ summary.total }}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="text-muted small">Enabled</div>
+      <div class="h4 mb-0 text-success">{{ summary.enabled }}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="text-muted small">Disabled</div>
+      <div class="h4 mb-0 text-warning">{{ summary.disabled }}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="text-muted small">Validation</div>
+      {% if validation_valid %}
+      <div class="h5 mb-0 text-success">&#10003; {{ selected_pack_label }} valid</div>
+      {% else %}
+      <div class="h5 mb-0 text-danger">&#10007; Validation failed</div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="filter-panel row g-3 mb-4">
+  <form class="row g-3" method="get" action="{{ url_for('rules') }}">
+    <div class="col-md-3">
+      <label class="form-label" for="pack">Category</label>
+      <select class="form-control" id="pack" name="pack">
+        {% for pack in packs %}
+        <option value="{{ pack.name }}" {% if pack.name == selected_pack %}selected{% endif %}>{{ pack.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label" for="search">Rule Name</label>
+      <input class="form-control" id="search" name="search" value="{{ search }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label" for="severity">Severity</label>
+      <select class="form-control" id="severity" name="severity">
+        <option value="">Any</option>
+        {% for severity in ["Low", "Medium", "High"] %}
+        <option value="{{ severity }}" {% if severity == severity_filter %}selected{% endif %}>{{ severity }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label" for="state">State</label>
+      <select class="form-control" id="state" name="state">
+        <option value="">Enabled and Disabled</option>
+        <option value="enabled" {% if state_filter == "enabled" %}selected{% endif %}>Enabled</option>
+        <option value="disabled" {% if state_filter == "disabled" %}selected{% endif %}>Disabled</option>
+      </select>
+    </div>
+    <div class="col-12 d-flex gap-2">
+      <button class="btn btn-primary" type="submit">Apply Filters</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('rules', pack=selected_pack) }}">Clear Filters</a>
+    </div>
+  </form>
+</section>
+
+<section class="panel p-3 mb-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h2 class="h5 page-title mb-1">{{ selected_pack_label }} Rules</h2>
+      <div class="text-muted">Enabled state, alert metadata, and runtime statistics</div>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table data-table table-striped table-hover align-middle">
+      <thead>
+        <tr>
+          <th>Enabled</th>
+          <th>Name</th>
+          <th>Severity</th>
+          <th>Hits</th>
+          <th>Alerts</th>
+          <th>Last Triggered</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rule in rules %}
+        <tr>
+          <td>
+            <form method="post" action="{{ url_for('toggle_rule', pack=selected_pack, rule_index=rule.index) }}">
+              <button class="btn btn-sm {% if rule.enabled %}btn-success{% else %}btn-outline-secondary{% endif %}" type="submit">
+                {% if rule.enabled %}&#10003;{% else %}&#10007;{% endif %}
+              </button>
+            </form>
+          </td>
+          <td>
+            <a class="text-decoration-none" href="{{ url_for('rule_detail', pack=selected_pack, rule_index=rule.index) }}">{{ rule.name }}</a>
+            {% if rule.tags %}
+            <div class="mt-1">
+              {% for tag in rule.tags %}
+              <span class="badge text-bg-secondary">{{ tag }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </td>
+          <td><span class="badge severity-{{ rule.severity|lower }}">{{ rule.severity }}</span></td>
+          <td>{{ rule.hits }}</td>
+          <td>{{ rule.alerts }}</td>
+          <td>{{ rule.last_triggered|local_time if rule.last_triggered else "Never" }}</td>
+          <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('rule_detail', pack=selected_pack, rule_index=rule.index) }}">Open</a></td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-muted text-center">No rules found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel p-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h2 class="h5 page-title mb-1">{{ selected_pack_label }} YAML</h2>
+      <div class="text-muted">Edit one rule pack at a time. YAML is validated before saving.</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-primary btn-sm" href="{{ url_for('export_rules_pack', pack=selected_pack) }}">Export YAML</a>
+      <form class="d-flex flex-wrap gap-2" method="post" action="{{ url_for('import_rules_pack') }}" enctype="multipart/form-data">
+        <input type="hidden" name="pack" value="{{ selected_pack }}">
+        <input class="form-control form-control-sm" type="file" name="pack_file" accept=".yaml,.yml,text/yaml,application/x-yaml">
+        <button class="btn btn-outline-secondary btn-sm" type="submit">Import YAML</button>
+      </form>
+      <select class="form-control form-control-sm rule-template-select" id="rule-template">
+        <option value="">Insert template...</option>
+        <option value="smb_recon">SMB Recon</option>
+        <option value="rdp_sweep">RDP Sweep</option>
+        <option value="ssh_sweep">SSH Sweep</option>
+        <option value="dns_volume">DNS Volume</option>
+        <option value="unique_domains">Excessive Unique Domains</option>
+        <option value="https_fanout">HTTPS Fanout</option>
+      </select>
+      <button class="btn btn-outline-secondary btn-sm" id="insert-template" type="button">Insert</button>
+      <button class="btn btn-outline-secondary btn-sm" id="format-yaml" type="button">Format YAML</button>
+    </div>
+  </div>
+  <div id="editor-status" class="alert d-none mb-3"></div>
+  <form id="rule-editor-form" method="post" action="{{ url_for('save_rules_pack') }}">
+    <input type="hidden" name="pack" value="{{ selected_pack }}">
+    <textarea class="d-none" id="pack-yaml" name="pack_yaml">{{ pack_text }}</textarea>
+    <div class="rule-editor-shell">
+      <div id="rule-editor" class="rule-editor" data-initial-yaml="{{ pack_text|tojson|forceescape }}"></div>
+    </div>
+    <noscript>
+      <textarea class="form-control font-monospace mt-3" name="pack_yaml_fallback" rows="24" spellcheck="false">{{ pack_text }}</textarea>
+    </noscript>
+    <div class="form-text mt-2">Restart sensor for saved rule changes to fully apply.</div>
+    <div class="mt-3">
+      <button class="btn btn-primary" type="submit">Save {{ selected_pack_label }}</button>
+    </div>
+  </form>
+</section>
+
+<script src="{{ url_for('static', filename='vendor/monaco/vs/loader.js') }}"></script>
+<script>
+(() => {
+  const editorNode = document.getElementById("rule-editor");
+  const hiddenTextarea = document.getElementById("pack-yaml");
+  const form = document.getElementById("rule-editor-form");
+  const status = document.getElementById("editor-status");
+  const formatButton = document.getElementById("format-yaml");
+  const templateSelect = document.getElementById("rule-template");
+  const insertTemplateButton = document.getElementById("insert-template");
+  const sensorStatusValue = document.getElementById("sensor-status-value");
+  const sensorControlMessage = document.getElementById("sensor-control-message");
+  const restartSensorButton = document.getElementById("restart-sensor-button");
+  let editor = null;
+  let lastSavedValue = hiddenTextarea.value;
+  let allowNavigation = false;
+  const monacoBasePath = "{{ url_for('static', filename='vendor/monaco/vs') }}";
+
+  const templates = {
+    smb_recon: `  - name: SMB Recon
+    enabled: true
+    event: packet
+    tags:
+      - recon
+      - smb
+    match:
+      protocol: TCP
+      dst_port: 445
+    aggregate:
+      unique_dst_ips:
+        gte: 20
+      within_seconds: 60
+    alert:
+      severity: High
+      title: SMB Recon Activity
+      description: Source contacted many hosts via SMB.
+`,
+    rdp_sweep: `  - name: RDP Sweep
+    enabled: true
+    event: packet
+    tags:
+      - recon
+      - rdp
+    match:
+      protocol: TCP
+      dst_port: 3389
+    aggregate:
+      unique_dst_ips:
+        gte: 15
+      within_seconds: 60
+    alert:
+      severity: High
+      title: RDP Sweep Activity
+      description: Source contacted many hosts via RDP.
+`,
+    ssh_sweep: `  - name: SSH Sweep
+    enabled: true
+    event: packet
+    tags:
+      - recon
+      - ssh
+    match:
+      protocol: TCP
+      dst_port: 22
+    aggregate:
+      unique_dst_ips:
+        gte: 20
+      within_seconds: 120
+    alert:
+      severity: Medium
+      title: SSH Sweep Activity
+      description: Source contacted many hosts via SSH.
+`,
+    dns_volume: `  - name: High DNS Volume
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - volume
+    aggregate:
+      count:
+        gte: 300
+      within_seconds: 60
+    alert:
+      severity: Medium
+      title: High DNS Volume
+      description: Client generated unusually high DNS query volume.
+`,
+    unique_domains: `  - name: Excessive Unique Domains
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - domains
+    aggregate:
+      unique_domains:
+        gte: 100
+      within_seconds: 300
+    alert:
+      severity: High
+      title: Excessive Unique Domains
+      description: Client queried many unique domains.
+`,
+    https_fanout: `  - name: HTTPS Fanout
+    enabled: true
+    event: packet
+    tags:
+      - web
+      - fanout
+    match:
+      protocol: TCP
+      dst_port: 443
+      src_ip:
+        in_networks:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+    aggregate:
+      unique_dst_ips:
+        gte: 100
+      within_seconds: 60
+    alert:
+      severity: Medium
+      title: High HTTPS Fanout
+      description: Internal source contacted many HTTPS destinations.
+`,
+  };
+
+  function showStatus(message, kind) {
+    status.className = `alert alert-${kind} mb-3`;
+    status.textContent = message;
+  }
+
+  function clearStatus() {
+    status.className = "alert d-none mb-3";
+    status.textContent = "";
+  }
+
+  function enableTextareaFallback(message) {
+    editor = null;
+    hiddenTextarea.classList.remove("d-none");
+    hiddenTextarea.classList.add("form-control", "font-monospace");
+    hiddenTextarea.rows = 24;
+    editorNode.classList.add("d-none");
+    if (message) {
+      showStatus(message, "warning");
+    }
+  }
+
+  function setSensorMessage(message, kind) {
+    if (!sensorControlMessage) {
+      return;
+    }
+    sensorControlMessage.className = `small text-${kind}`;
+    sensorControlMessage.textContent = message;
+  }
+
+  function setSensorStatus(statusValue) {
+    const normalized = String(statusValue || "unknown").toLowerCase();
+    if (normalized === "running") {
+      sensorStatusValue.textContent = "Running";
+      sensorStatusValue.className = "h5 mb-0 text-success";
+      return;
+    }
+    if (normalized === "stopped") {
+      sensorStatusValue.textContent = "Stopped";
+      sensorStatusValue.className = "h5 mb-0 text-warning";
+      return;
+    }
+    sensorStatusValue.textContent = "Unknown";
+    sensorStatusValue.className = "h5 mb-0 text-secondary";
+  }
+
+  async function refreshSensorStatus() {
+    try {
+      const response = await fetch("{{ url_for('sensor_status') }}");
+      const payload = await response.json();
+      setSensorStatus(payload.status);
+    } catch (error) {
+      setSensorStatus("unknown");
+    }
+  }
+
+  async function restartSensor() {
+    if (!window.confirm("Restarting the sensor will briefly pause packet capture.\n\nContinue?")) {
+      return;
+    }
+    if (restartSensorButton) {
+      restartSensorButton.disabled = true;
+    }
+    setSensorMessage("Restarting sensor...", "muted");
+    try {
+      const response = await fetch("{{ url_for('sensor_restart') }}", {
+        method: "POST",
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) {
+        setSensorMessage(payload.error || "Sensor restart failed.", "danger");
+        return;
+      }
+      setSensorMessage("Sensor restarted successfully.", "success");
+      await refreshSensorStatus();
+    } catch (error) {
+      setSensorMessage(`Sensor restart failed: ${error}`, "danger");
+    } finally {
+      if (restartSensorButton) {
+        restartSensorButton.disabled = false;
+      }
+    }
+  }
+
+  function currentValue() {
+    return editor ? editor.getValue() : hiddenTextarea.value;
+  }
+
+  function syncTextarea() {
+    hiddenTextarea.value = currentValue();
+  }
+
+  function insertText(text) {
+    if (!editor) {
+      hiddenTextarea.value += `\n${text}`;
+      return;
+    }
+    const model = editor.getModel();
+    const selection = editor.getSelection();
+    const value = editor.getValue();
+    const prefix = value.trim() ? "" : "signatures:\n";
+    const insertion = `${prefix}${text}`;
+    editor.executeEdits("erl-template", [{ range: selection, text: insertion, forceMoveMarkers: true }]);
+    editor.focus();
+    model.pushStackElement();
+  }
+
+  function completion(label, insertText, detail) {
+    return {
+      label,
+      kind: monaco.languages.CompletionItemKind.Snippet,
+      insertText,
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      detail,
+    };
+  }
+
+  function registerErlCompletions() {
+    monaco.languages.registerCompletionItemProvider("yaml", {
+      provideCompletionItems: () => ({
+        suggestions: [
+          completion("event: packet", "event: packet", "ERL event type"),
+          completion("event: dns", "event: dns", "ERL event type"),
+          completion("count", "count:\n  gte: ${1:10}", "Aggregate"),
+          completion("unique_dst_ips", "unique_dst_ips:\n  gte: ${1:20}", "Aggregate"),
+          completion("unique_dst_ports", "unique_dst_ports:\n  gte: ${1:20}", "Aggregate"),
+          completion("unique_domains", "unique_domains:\n  gte: ${1:100}", "Aggregate"),
+          completion("gte", "gte: ${1:1}", "Comparator"),
+          completion("gt", "gt: ${1:1}", "Comparator"),
+          completion("lt", "lt: ${1:1}", "Comparator"),
+          completion("lte", "lte: ${1:1}", "Comparator"),
+          completion("in", "in:\n  - ${1:value}", "Match operator"),
+          completion("in_networks", "in_networks:\n  - ${1:10.0.0.0/8}", "Match operator"),
+          completion("contains", "contains: ${1:value}", "Match operator"),
+          completion("startswith", "startswith: ${1:value}", "Match operator"),
+          completion("endswith", "endswith: ${1:.xyz}", "Match operator"),
+          completion("regex", "regex: \"${1:.*pattern.*}\"", "Match operator"),
+          completion("dns_rcode", "dns_rcode: ${1|NOERROR,NXDOMAIN,SERVFAIL,REFUSED|}", "DNS event field"),
+          completion("tcp_flags", "tcp_flags: ${1|S,SA,A,PA,FA,R|}", "Packet event field"),
+          completion("any", "any:\n  - ${1:field}: ${2:value}", "Logic operator"),
+          completion("all", "all:\n  - ${1:field}: ${2:value}", "Logic operator"),
+          completion("not", "not:\n  ${1:field}: ${2:value}", "Logic operator"),
+          completion("severity", "severity: ${1|Low,Medium,High|}", "Alert field"),
+          completion("title", "title: ${1:Alert Title}", "Alert field"),
+          completion("description", "description: ${1:Alert description.}", "Alert field"),
+          completion("complete signature", "- name: ${1:Rule Name}\n  enabled: true\n  event: ${2|packet,dns|}\n  match:\n    ${3:field}: ${4:value}\n  aggregate:\n    count:\n      gte: ${5:1}\n    within_seconds: ${6:60}\n  alert:\n    severity: ${7|Low,Medium,High|}\n    title: ${8:Alert Title}\n    description: ${9:Alert description.}", "ERL snippet"),
+          completion("match block", "match:\n  ${1:field}: ${2:value}", "ERL snippet"),
+          completion("aggregate block", "aggregate:\n  count:\n    gte: ${1:1}\n  within_seconds: ${2:60}", "ERL snippet"),
+          completion("alert block", "alert:\n  severity: ${1|Low,Medium,High|}\n  title: ${2:Alert Title}\n  description: ${3:Alert description.}", "ERL snippet"),
+          completion("exclude block", "exclude:\n  ${1:src_ip}:\n    - ${2:10.0.0.10}", "ERL snippet"),
+        ],
+      }),
+    });
+  }
+
+  async function formatYaml() {
+    syncTextarea();
+    clearStatus();
+    formatButton.disabled = true;
+    try {
+      const body = new URLSearchParams();
+      body.set("pack", "{{ selected_pack }}");
+      body.set("pack_yaml", hiddenTextarea.value);
+      const response = await fetch("{{ url_for('format_rules_pack') }}", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        showStatus(payload.error || "YAML formatting failed.", "danger");
+        return;
+      }
+      if (editor) {
+        editor.setValue(payload.formatted);
+      }
+      hiddenTextarea.value = payload.formatted;
+      showStatus("YAML formatted.", "success");
+    } catch (error) {
+      showStatus(`YAML formatting failed: ${error}`, "danger");
+    } finally {
+      formatButton.disabled = false;
+    }
+  }
+
+  if (window.require) {
+    require.config({ paths: { vs: monacoBasePath } });
+    require(["vs/editor/editor.main"], () => {
+      try {
+        registerErlCompletions();
+        editor = monaco.editor.create(editorNode, {
+          value: JSON.parse(editorNode.dataset.initialYaml),
+          language: "yaml",
+          theme: "vs-dark",
+          automaticLayout: true,
+          minimap: { enabled: false },
+          scrollBeyondLastLine: false,
+          tabSize: 2,
+          insertSpaces: true,
+          wordWrap: "on",
+        });
+        lastSavedValue = editor.getValue();
+        editor.onDidChangeModelContent(() => {
+          hiddenTextarea.value = editor.getValue();
+        });
+      } catch (error) {
+        enableTextareaFallback(`Editor failed to initialize. Using textarea fallback: ${error}`);
+      }
+    }, (error) => {
+      enableTextareaFallback(`Editor failed to load. Using textarea fallback: ${error}`);
+    });
+    require.onError = (error) => {
+      if (!editor) {
+        enableTextareaFallback(`Editor failed to load. Using textarea fallback: ${error}`);
+      } else {
+        throw error;
+      }
+    };
+  } else {
+    enableTextareaFallback("Editor loader unavailable. Using textarea fallback.");
+  }
+
+  form.addEventListener("submit", () => {
+    syncTextarea();
+    allowNavigation = true;
+    lastSavedValue = hiddenTextarea.value;
+  });
+
+  formatButton.addEventListener("click", formatYaml);
+  if (restartSensorButton) {
+    restartSensorButton.addEventListener("click", restartSensor);
+  }
+
+  insertTemplateButton.addEventListener("click", () => {
+    const template = templates[templateSelect.value];
+    if (!template) {
+      showStatus("Choose a template to insert.", "warning");
+      return;
+    }
+    insertText(template);
+    clearStatus();
+  });
+
+  window.addEventListener("beforeunload", (event) => {
+    if (allowNavigation || currentValue() === lastSavedValue) {
+      return;
+    }
+    event.preventDefault();
+    event.returnValue = "";
+  });
+
+  refreshSensorStatus();
+})();
+</script>
+{% endblock %}

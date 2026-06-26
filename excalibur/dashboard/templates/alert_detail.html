@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h3 page-title mb-1">Alert Details</h1>
+    <div class="text-muted">{{ details.alert.title }}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('alerts') }}">Back to Alerts</a>
+</div>
+
+<section class="panel p-3 mb-4">
+  <div class="row g-3">
+    <div class="col-md-3">
+      <div class="text-muted small">Alert ID</div>
+      <div class="fw-semibold">{{ details.alert.id }}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="text-muted small">Timestamp</div>
+      <div class="fw-semibold">{{ details.alert.timestamp|local_time }}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="text-muted small">Severity</div>
+      {% set severity_class = 'severity-' ~ details.alert.severity|lower if details.alert.severity|lower in ['low', 'medium', 'high'] else 'severity-default' %}
+      <span class="badge badge-severity {{ severity_class }}">{{ details.alert.severity }}</span>
+    </div>
+    <div class="col-md-3">
+      <div class="text-muted small">Source</div>
+      <div class="fw-semibold">{{ details.alert.source_ip or "-" }}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="text-muted small">Destination</div>
+      <div class="fw-semibold">{{ details.alert.destination_ip or "-" }}</div>
+    </div>
+    <div class="col-12">
+      <div class="text-muted small">Title</div>
+      <div class="fw-semibold">{{ details.alert.title }}</div>
+    </div>
+    <div class="col-12">
+      <div class="text-muted small">Description</div>
+      <div class="fw-semibold">{{ details.alert.description or "-" }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="panel p-3 mb-4">
+  <h2 class="h5 page-title mb-3">Rule Information</h2>
+  <div class="system-grid">
+    <span>Rule Name</span>
+    <strong>{{ details.rule.name }}</strong>
+    <span>Rule Pack</span>
+    <strong>{{ details.rule.pack }}</strong>
+    <span>Event Type</span>
+    <strong>{{ details.rule.event_type }}</strong>
+    <span>Rule Tags</span>
+    <strong>{{ details.rule.tags|join(", ") if details.rule.tags else "-" }}</strong>
+  </div>
+</section>
+
+<section class="panel p-3 mb-4">
+  <h2 class="h5 page-title mb-3">Detection Evidence</h2>
+  {% if details.evidence %}
+  <div class="system-grid">
+    {% for row in details.evidence %}
+    <span>{{ row.label }}</span>
+    <strong>{{ row.value }}</strong>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-muted">-</div>
+  {% endif %}
+</section>
+
+<section class="panel p-3">
+  <h2 class="h5 page-title mb-3">Related Activity</h2>
+  <div class="row g-3">
+    <div class="col-xl-4">
+      <div class="text-muted small mb-2">Recent Alerts</div>
+      {% if details.related_activity.alerts %}
+      <div class="table-responsive">
+        <table class="table data-table align-middle mb-0">
+          <thead>
+            <tr><th>Time</th><th>Rule</th></tr>
+          </thead>
+          <tbody>
+            {% for related in details.related_activity.alerts %}
+            <tr>
+              <td>{{ related.timestamp|local_time }}</td>
+              <td><a class="text-decoration-none" href="{{ url_for('alert_detail', alert_id=related.id) }}">{{ related.title }}</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-muted">No recent alerts for this source.</div>
+      {% endif %}
+    </div>
+    <div class="col-xl-4">
+      <div class="text-muted small mb-2">Recent DNS Queries</div>
+      {% if details.related_activity.dns_queries %}
+      <div class="table-responsive">
+        <table class="table data-table align-middle mb-0">
+          <thead>
+            <tr><th>Time</th><th>Query</th></tr>
+          </thead>
+          <tbody>
+            {% for dns in details.related_activity.dns_queries %}
+            <tr>
+              <td>{{ dns.timestamp|local_time }}</td>
+              <td>{{ dns.query_name }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-muted">No recent DNS queries for this source.</div>
+      {% endif %}
+    </div>
+    <div class="col-xl-4">
+      <div class="text-muted small mb-2">Recent Traffic</div>
+      {% if details.related_activity.traffic %}
+      <div class="table-responsive">
+        <table class="table data-table align-middle mb-0">
+          <thead>
+            <tr><th>Time</th><th>Flow</th></tr>
+          </thead>
+          <tbody>
+            {% for traffic in details.related_activity.traffic %}
+            <tr>
+              <td>{{ traffic.timestamp|local_time }}</td>
+              <td>{{ traffic.src_ip }} → {{ traffic.dst_ip }} : {{ traffic.dst_port or "-" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-muted">No recent traffic for this source.</div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}

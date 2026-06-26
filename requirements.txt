@@ -1,0 +1,6 @@
+scapy
+flask
+plyer
+requests
+python-dotenv
+tzdata

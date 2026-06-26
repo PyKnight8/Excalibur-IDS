@@ -1,0 +1,3 @@
+class DashboardRoutes:
+    pass
+

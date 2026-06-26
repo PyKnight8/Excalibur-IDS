@@ -1,0 +1,8 @@
+name: OTX Threat Intel
+id: otx_threat_intel
+version: 1.0.0
+author: Excalibur
+description: Downloads public OTX indicators into a local cache and performs in-memory IOC matching.
+entrypoint: plugin.py
+enabled: true
+

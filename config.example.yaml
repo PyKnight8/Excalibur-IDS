@@ -1,0 +1,50 @@
+general:
+  timezone: Asia/Amman
+
+database:
+  path: excalibur.sqlite
+
+portscan:
+  enabled: true
+  threshold: 20
+  window_seconds: 60
+  cooldown_seconds: 300
+  excluded_sources:
+
+monitored_networks: # For local intrusion detection
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+
+notifications:
+  enabled: false
+  desktop:
+    enabled: false
+  ntfy:
+    enabled: false
+    url: "http://ntfyServer:5002/Excalibur-Relay-Notifications"
+    timeout_seconds: 5
+
+browser_threat_protection:
+  enabled: true
+  risk_threshold: 60
+  suspicious_tlds:
+    - zip
+    - mov
+    - top
+    - xyz
+    - click
+    - icu
+    - cyou
+    - gq
+    - tk
+    - ml
+    - cf
+  suspicious_keywords:
+    - login
+    - verify
+    - secure
+    - account
+    - update
+    - wallet
+    - reset

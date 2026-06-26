@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <h1 class="h3 page-title mb-0">Traffic</h1>
+  <div class="text-muted">{{ total_records }} matching records</div>
+</div>
+
+<form class="filter-panel row g-3 mb-4" method="get" action="{{ url_for('traffic') }}">
+  <input type="hidden" name="sort_by" value="{{ sort_by }}">
+  <input type="hidden" name="sort_order" value="{{ sort_order }}">
+
+  <div class="col-md-4">
+    <label class="form-label" for="search">Search</label>
+    <input class="form-control" id="search" name="search" value="{{ search }}" placeholder="IP, protocol, port, or service">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="src_ip">Source IP</label>
+    <input class="form-control" id="src_ip" name="src_ip" value="{{ filters.src_ip }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="dst_ip">Destination IP</label>
+    <input class="form-control" id="dst_ip" name="dst_ip" value="{{ filters.dst_ip }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="protocol">Protocol</label>
+    <input class="form-control" id="protocol" name="protocol" value="{{ filters.protocol }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="src_port">Source Port</label>
+    <input class="form-control" id="src_port" name="src_port" value="{{ filters.src_port }}">
+  </div>
+  <div class="col-md-4">
+    <label class="form-label" for="dst_port">Destination Port</label>
+    <input class="form-control" id="dst_port" name="dst_port" value="{{ filters.dst_port }}">
+  </div>
+  <div class="col-12 d-flex gap-2">
+    <button class="btn btn-primary" type="submit">Apply Filters</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('traffic') }}">Clear Filters</a>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table data-table table-striped table-hover align-middle">
+    <thead>
+      <tr>
+        {% for column, label in [
+          ('timestamp', 'Timestamp'),
+          ('src_ip', 'Source IP'),
+          ('dst_ip', 'Destination IP'),
+          ('protocol', 'Protocol'),
+          ('src_port', 'Source Port'),
+          ('dst_port', 'Destination Port'),
+          ('service', 'Service'),
+          ('packet_size', 'Packet Size')
+        ] %}
+        <th class="{% if sort_by == column %}active-sort{% endif %}">
+          <a class="sort-link {% if sort_by == column %}active{% endif %}" href="{{ sort_urls[column] }}">
+            <span>{{ label }}</span>
+            <span>{% if sort_by == column and sort_order == 'ASC' %}&uarr;{% else %}&darr;{% endif %}</span>
+          </a>
+        </th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in traffic_entries %}
+      {% set protocol = entry.protocol|lower %}
+      {% set protocol_class = 'protocol-' ~ protocol if protocol in ['tcp', 'udp', 'dns', 'icmp'] else 'protocol-default' %}
+      <tr>
+        <td>{{ entry.timestamp|local_time }}</td>
+        <td>{{ entry.src_ip }}</td>
+        <td>{{ entry.dst_ip }}</td>
+        <td><span class="badge badge-protocol {{ protocol_class }}">{{ entry.protocol }}</span></td>
+        <td>{{ "" if entry.src_port is none else entry.src_port }}</td>
+        <td>{{ "" if entry.dst_port is none else entry.dst_port }}</td>
+        <td>{{ entry.service }}</td>
+        <td>{{ entry.packet_size }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="8" class="text-muted text-center">No traffic entries found.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Traffic pagination">
+  <div class="text-muted">Page {{ page }} of {{ total_pages }}</div>
+  <ul class="pagination mb-0">
+    <li class="page-item {% if not has_previous %}disabled{% endif %}">
+      <a class="page-link" href="{{ previous_url if has_previous else '#' }}">Previous</a>
+    </li>
+    <li class="page-item {% if not has_next %}disabled{% endif %}">
+      <a class="page-link" href="{{ next_url if has_next else '#' }}">Next</a>
+    </li>
+  </ul>
+</nav>
+{% endblock %}

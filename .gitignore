@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.sqlite
+*.db
+data/domains.log
+.venv/
+venv/
+excalibur.sqlite-shm
+excalibur.sqlite-wal
+config.yaml
+third_party/python/*.exe
+third_party/npcap/*.exe

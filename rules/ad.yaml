@@ -1,0 +1,154 @@
+signatures: # Active Directory
+  - name: SMB Recon
+    enabled: true
+    event: packet
+    tags:
+      - ad
+      - smb
+      - recon
+    match:
+      protocol: TCP
+      dst_port: 445
+    exclude:
+      dst_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+      src_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+    aggregate:
+      unique_dst_ips:
+        gte: 15
+      within_seconds: 60
+    alert:
+      severity: Medium
+      title: SMB Recon Activity
+      description: Source contacted many hosts via SMB.
+  - name: RDP Recon
+    enabled: true
+    event: packet
+    tags:
+      - ad
+      - rdp
+      - recon
+    match:
+      protocol: TCP
+      dst_port: 3389
+    exclude:
+      dst_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+      src_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: RDP Recon Activity
+      description: Source contacted many hosts via RDP.
+  - name: WinRM Recon
+    enabled: true
+    event: packet
+    tags:
+      - ad
+      - winrm
+      - recon
+    match:
+      protocol: TCP
+      dst_port:
+        in:
+          - 5985
+          - 5986
+    exclude:
+      dst_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+      src_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: High
+      title: WinRM Recon Activity
+      description: Source contacted many hosts via WinRM.
+  - name: LDAP Recon
+    enabled: true
+    event: packet
+    tags:
+      - ad
+      - ldap
+      - recon
+    match:
+      protocol: TCP
+      dst_port:
+        in:
+          - 389
+          - 636
+    exclude:
+      dst_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+      src_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: Medium
+      title: LDAP Recon Activity
+      description: Source contacted many LDAP services.
+  - name: Kerberos Recon
+    enabled: true
+    event: packet
+    tags:
+      - ad
+      - kerberos
+      - recon
+    match:
+      protocol: TCP
+      dst_port: 88
+    exclude:
+      dst_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+      src_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+    aggregate:
+      unique_dst_ips:
+        gte: 10
+      within_seconds: 60
+    alert:
+      severity: Medium
+      title: Kerberos Recon Activity
+      description: Source contacted many Kerberos services.
+  - name: Administrative Service Sweep
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      tcp_flags: S
+      dst_port:
+        in:
+          - 22
+          - 88
+          - 135
+          - 139
+          - 389
+          - 445
+          - 636
+          - 3389
+          - 5985
+          - 5986
+    exclude:
+      dst_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+    aggregate:
+      unique_dst_ips:
+        gte: 15
+      count:
+        gte: 30
+      within_seconds: 60
+    alert:
+      severity: High
+      title: Administrative Service Sweep
+      description: Source attempted connections to multiple hosts across common administration and authentication services.

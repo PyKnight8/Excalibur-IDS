@@ -1,0 +1,99 @@
+signatures:
+  - name: SMB Recon
+    enabled: true
+    event: packet
+    tags:
+      - recon
+      - smb
+      - mitre:T1595
+    match:
+      protocol: TCP
+      dst_port: 445
+    aggregate:
+      unique_dst_ips:
+        gte: 20
+      within_seconds: 60
+    alert:
+      severity: High
+      title: SMB Recon Activity
+      description: Source contacted many hosts via SMB.
+  - name: SSH Activity
+    enabled: true
+    event: packet
+    tags:
+      - recon
+      - ssh
+    match:
+      protocol: TCP
+      dst_port: 22
+    aggregate:
+      count:
+        gte: 20
+      within_seconds: 60
+    alert:
+      severity: Medium
+      title: SSH Activity Detected
+      description: Significant SSH traffic observed.
+  - name: Port Scan
+    enabled: true
+    event: packet
+    tags:
+      - recon
+      - portscan
+      - discovery
+    group_by: src_ip
+    match:
+      protocol: TCP
+      tcp_flags: S
+      dst_port:
+        lte: 10000
+    aggregate:
+      unique_dst_ports:
+        gte: 30
+      count:
+        gte: 50
+      within_seconds: 60
+    alert:
+      severity: High
+      title: Port Scan Activity
+      description: Source attempted connections to many service ports.
+  - name: Multi-Service Reconnaissance
+    enabled: true
+    event: packet
+    cooldown_seconds: 300
+    match:
+      protocol: TCP
+      tcp_flags: S
+      dst_port:
+        in:
+          - 21
+          - 22
+          - 23
+          - 53
+          - 80
+          - 88
+          - 135
+          - 139
+          - 389
+          - 443
+          - 445
+          - 636
+          - 1433
+          - 3306
+          - 3389
+          - 5432
+          - 5985
+          - 5986
+    exclude:
+      dst_ip:
+        - 10.0.2.101 # Replace with your Domain Controller IP
+    aggregate:
+      unique_dst_ports:
+        gte: 8
+      count:
+        gte: 20
+      within_seconds: 60
+    alert:
+      severity: High
+      title: Multi-Service Reconnaissance
+      description: Source attempted connections across multiple common services.

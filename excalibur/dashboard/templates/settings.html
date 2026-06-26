@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h3 page-title mb-1">Settings</h1>
+    <div class="text-muted">Dashboard display preferences</div>
+  </div>
+</div>
+
+{% if saved %}
+<div class="alert alert-success">Settings saved.</div>
+{% endif %}
+{% if rules_saved %}
+<div class="alert alert-success">Detection rules saved. Restart sensor for rule changes to fully apply.</div>
+{% endif %}
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+{% if rules_error %}
+<div class="alert alert-danger">Invalid rules.yaml: {{ rules_error }}</div>
+{% endif %}
+
+<section class="panel p-3 mb-4">
+  <form method="post" action="{{ url_for('settings') }}">
+    <input type="hidden" name="action" value="save_settings">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label" for="timezone">Current timezone</label>
+        <select class="form-control" id="timezone" name="timezone">
+          {% for timezone in supported_timezones %}
+          <option value="{{ timezone }}" {% if timezone == current_timezone %}selected{% endif %}>{{ timezone }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text">Timestamps remain stored in UTC and are converted only for display.</div>
+      </div>
+      <div class="col-md-8">
+        <label class="form-label" for="excluded_sources">Port scan excluded sources</label>
+        <textarea class="form-control" id="excluded_sources" name="excluded_sources" rows="5" placeholder="x.x.x.x">{{ excluded_sources }}</textarea>
+        <div class="form-text">Exact source IPs only. One IP address per line.</div>
+      </div>
+      <div class="col-12">
+        <hr class="border-secondary">
+        <h2 class="h5 page-title mb-3">Notifications</h2>
+      </div>
+      <div class="col-md-6">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="notifications_enabled" name="notifications_enabled" {% if notifications.enabled %}checked{% endif %}>
+          <label class="form-check-label" for="notifications_enabled">Enable Alert Notifications</label>
+        </div>
+        <div class="form-text">Alerts remain stored locally. Notifications are optional add-on delivery methods.</div>
+      </div>
+      <div class="col-md-6">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="desktop_enabled" name="desktop_enabled" {% if notifications.desktop.enabled %}checked{% endif %}>
+          <label class="form-check-label" for="desktop_enabled">Enable Native Desktop Notifications</label>
+        </div>
+        <div class="form-text">Uses the operating system desktop notification service from the Excalibur application.</div>
+      </div>
+      <div class="col-md-6">
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="ntfy_enabled" name="ntfy_enabled" {% if notifications.ntfy.enabled %}checked{% endif %}>
+          <label class="form-check-label" for="ntfy_enabled">Enable NTFY Relay Notifications</label>
+        </div>
+        <label class="form-label" for="ntfy_url">NTFY URL</label>
+        <input class="form-control" id="ntfy_url" name="ntfy_url" value="{{ notifications.ntfy.url }}" placeholder="http://ntfyserverip:5002/Excalibur-Relay-Notifications">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label" for="ntfy_timeout_seconds">Timeout (seconds)</label>
+        <input class="form-control" id="ntfy_timeout_seconds" name="ntfy_timeout_seconds" type="number" min="1" step="1" value="{{ notifications.ntfy.timeout_seconds }}">
+      </div>
+      <div class="col-12">
+        <button class="btn btn-primary" type="submit">Save Settings</button>
+      </div>
+    </div>
+  </form>
+  <div class="mt-3 d-flex flex-wrap align-items-center gap-3">
+    <button class="btn btn-outline-primary" id="test-notification-button" type="button">Send Test Notification</button>
+    <div id="test-notification-result" class="small"></div>
+  </div>
+</section>
+
+<section class="panel p-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h2 class="h5 page-title mb-1">Detection Rules</h2>
+      <div class="text-muted">Edit rules.yaml detector configuration only.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('settings') }}">Reload</a>
+  </div>
+  <form method="post" action="{{ url_for('settings') }}">
+    <input type="hidden" name="action" value="save_rules">
+    <textarea class="form-control font-monospace" name="rules_yaml" rows="22" spellcheck="false">{{ rules_text }}</textarea>
+    <div class="form-text mt-2">Restart sensor for rule changes to fully apply. YAML is validated before saving.</div>
+    <div class="mt-3">
+      <button class="btn btn-primary" type="submit">Save Rules</button>
+    </div>
+  </form>
+</section>
+<script>
+(() => {
+  const button = document.getElementById("test-notification-button");
+  const result = document.getElementById("test-notification-result");
+
+  if (!button || !result) {
+    return;
+  }
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    result.className = "small text-muted";
+    result.textContent = "Sending test notification...";
+    try {
+      const response = await fetch("{{ url_for('test_notification') }}", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+        },
+      });
+      const payload = await response.json();
+      if (response.ok && payload.success) {
+        result.className = "small text-success";
+        result.textContent = "Test notification sent.";
+      } else {
+        result.className = "small text-danger";
+        result.textContent = payload.error || "Test notification failed.";
+      }
+    } catch (error) {
+      result.className = "small text-danger";
+      result.textContent = "Test notification failed.";
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}

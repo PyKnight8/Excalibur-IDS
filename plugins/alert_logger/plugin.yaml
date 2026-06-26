@@ -1,0 +1,8 @@
+name: Alert Logger
+id: alert_logger
+version: 1.0.0
+author: Excalibur
+description: Logs alert events received by the plugin framework.
+entrypoint: plugin.py
+enabled: false
+

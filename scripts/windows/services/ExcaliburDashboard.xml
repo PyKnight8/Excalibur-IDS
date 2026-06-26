@@ -1,0 +1,23 @@
+<service>
+  <id>ExcaliburDashboard</id>
+  <name>Excalibur Dashboard</name>
+  <description>Excalibur local web dashboard.</description>
+  <executable>__PYTHON__</executable>
+  <arguments>-m flask --app excalibur/dashboard/app.py run --host=127.0.0.1 --port=5000</arguments>
+  <workingdirectory>__APP_DIR__</workingdirectory>
+  <env name="EXCALIBUR_APP_DIR" value="__APP_DIR__" />
+  <env name="EXCALIBUR_DATA_DIR" value="__DATA_DIR__" />
+  <env name="EXCALIBUR_LOG_DIR" value="__LOG_DIR__" />
+  <env name="EXCALIBUR_CONFIG_PATH" value="__CONFIG_PATH__" />
+  <env name="EXCALIBUR_RULES_CONFIG_PATH" value="__RULES_CONFIG_PATH__" />
+  <env name="EXCALIBUR_RULES_DIR" value="__RULES_DIR__" />
+  <env name="EXCALIBUR_PLUGINS_DIR" value="__PLUGINS_DIR__" />
+  <logpath>__LOG_DIR__</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>8</keepFiles>
+  </log>
+  <onfailure action="restart" delay="5 sec" />
+  <stoptimeout>20 sec</stoptimeout>
+  <startmode>Automatic</startmode>
+</service>

@@ -1,0 +1,188 @@
+signatures:
+  - name: High DNS Volume
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - volume
+    aggregate:
+      count:
+        gte: 300
+      within_seconds: 60
+    alert:
+      severity: Medium
+      title: High DNS Volume
+      description: Client generated unusually high DNS query volume.
+  - name: Universal DNS Test
+    enabled: false
+    event: dns
+    aggregate:
+      count:
+        gte: 1
+      within_seconds: 60
+    alert:
+      severity: Low
+      title: Universal DNS Test
+      description: Any DNS event should trigger.
+  - name: Excessive Unique Domains
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - domains
+    aggregate:
+      unique_domains:
+        gte: 100
+      within_seconds: 300
+    alert:
+      severity: High
+      title: Excessive Unique Domains
+      description: Large number of unique domains queried in a short period.
+  - name: Suspicious TLD Queries
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - tld
+    match:
+      query_name:
+        regex: .*\.(xyz|top|click|gq|tk|work|zip)$
+    aggregate:
+      count:
+        gte: 10
+      within_seconds: 300
+    alert:
+      severity: Medium
+      title: Suspicious TLD Activity
+      description: Client repeatedly queried domains using uncommon or abused TLDs.
+  - name: Punycode Domains
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - punycode
+    match:
+      query_name:
+        contains: xn--
+    aggregate:
+      count:
+        gte: 5
+      within_seconds: 300
+    alert:
+      severity: Medium
+      title: Punycode Domain Activity
+      description: Client queried multiple punycode domains.
+  - name: Long Domain Queries
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - long-domain
+    match:
+      query_name:
+        regex: ^.{50,}$
+    aggregate:
+      count:
+        gte: 10
+      within_seconds: 300
+    alert:
+      severity: Low
+      title: Long DNS Queries
+      description: Client queried unusually long domain names.
+  - name: Random Looking Domains
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - dga
+    match:
+      query_name:
+        regex: ^[a-z0-9]{20,}\.
+    aggregate:
+      count:
+        gte: 10
+      within_seconds: 300
+    alert:
+      severity: Medium
+      title: Potential DGA Activity
+      description: Client queried multiple random-looking domains.
+  - name: DNS TXT Burst
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - txt
+      - tunneling
+    match:
+      query_type: TXT
+    aggregate:
+      count:
+        gte: 50
+      within_seconds: 60
+    alert:
+      severity: High
+      title: Excessive TXT Queries
+      description: Large volume of TXT record lookups observed.
+  - name: DNS TXT Fanout
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - txt
+      - tunneling
+    match:
+      query_type: TXT
+    aggregate:
+      unique_domains:
+        gte: 25
+      within_seconds: 300
+    alert:
+      severity: High
+      title: TXT Domain Fanout
+      description: TXT queries were sent to many different domains.
+  - name: High Unique Domains on Suspicious TLDs
+    enabled: true
+    event: dns
+    tags:
+      - dns
+      - tld
+      - fanout
+    match:
+      query_name:
+        regex: .*\.(xyz|top|click|gq|tk|work|zip)$
+    aggregate:
+      unique_domains:
+        gte: 25
+      within_seconds: 300
+    alert:
+      severity: High
+      title: Suspicious Domain Fanout
+      description: Client queried many unique domains using suspicious TLDs.
+  - name: NXDOMAIN Burst
+    enabled: true
+    event: dns
+    cooldown_seconds: 300
+    match:
+      dns_rcode: NXDOMAIN
+    aggregate:
+      count:
+        gte: 50
+      within_seconds: 60
+    alert:
+      severity: Medium
+      title: Excessive NXDOMAIN Responses
+      description: Client generated many failed DNS lookups.
+  - name: NXDOMAIN Fanout
+    enabled: true
+    event: dns
+    cooldown_seconds: 300
+    match:
+      dns_rcode: NXDOMAIN
+    aggregate:
+      unique_domains:
+        gte: 25
+      within_seconds: 60
+    alert:
+      severity: High
+      title: Excessive Failed Domain Lookups
+      description: Client queried many unique non-existent domains.

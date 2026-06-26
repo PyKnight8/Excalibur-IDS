@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h3 page-title mb-1">System Health</h1>
+    <div class="text-muted">Database growth, I/O estimates, and retention status</div>
+  </div>
+  <span class="badge badge-protocol protocol-dns">Journal Mode: {{ system.database.journal_mode }}</span>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-6 col-xl-3">
+    <div class="card metric-card metric-blue">
+      <div class="card-body">
+        <div class="metric-label">Database Size</div>
+        <div class="metric-value">{{ system.database.size_mb }} MB</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl-3">
+    <div class="card metric-card metric-cyan">
+      <div class="card-body">
+        <div class="metric-label">Traffic Records</div>
+        <div class="metric-value">{{ system.database.traffic_records }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl-3">
+    <div class="card metric-card metric-purple">
+      <div class="card-body">
+        <div class="metric-label">DNS Queries</div>
+        <div class="metric-value">{{ system.database.dns_queries }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl-3">
+    <div class="card metric-card metric-red">
+      <div class="card-body">
+        <div class="metric-label">Alerts</div>
+        <div class="metric-value">{{ system.database.alerts }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-6">
+    <section class="panel p-3 h-100">
+      <h2 class="h5 page-title mb-3">Database Metrics</h2>
+      <div class="system-grid">
+        <span>SQLite Path</span><strong>{{ system.database.path }}</strong>
+        <span>SQLite Size</span><strong>{{ system.database.size_mb }} MB</strong>
+        <span>Traffic Records</span><strong>{{ system.database.traffic_records }}</strong>
+        <span>DNS Queries</span><strong>{{ system.database.dns_queries }}</strong>
+        <span>Unique Domains</span><strong>{{ system.database.unique_domains }}</strong>
+        <span>Alerts</span><strong>{{ system.database.alerts }}</strong>
+        <span>Hosts</span><strong>{{ system.database.hosts }}</strong>
+      </div>
+    </section>
+  </div>
+
+  <div class="col-xl-6">
+    <section class="panel p-3 h-100">
+      <h2 class="h5 page-title mb-3">Write Metrics</h2>
+      <div class="system-grid">
+        <span>Traffic Records Written</span><strong>{{ system.writes.traffic_records_written }}</strong>
+        <span>DNS Queries Written</span><strong>{{ system.writes.dns_queries_written }}</strong>
+        <span>Unique Domains Discovered</span><strong>{{ system.writes.unique_domains_discovered }}</strong>
+        <span>Alerts Written</span><strong>{{ system.writes.alerts_written }}</strong>
+        <span>Hosts Added</span><strong>{{ system.writes.hosts_added }}</strong>
+        <span>Total Writes</span><strong>{{ system.writes.total_writes }}</strong>
+        <span>Estimated MB Written</span><strong>{{ system.writes.estimated_mb_written }} MB</strong>
+        <span>Estimated MB/hour</span><strong>{{ "%.4f"|format(system.writes.estimated_mb_per_hour) }}</strong>
+        <span>Estimated MB/day</span><strong>{{ "%.4f"|format(system.writes.estimated_mb_per_day) }}</strong>
+        <span>domains.log Written</span><strong>{{ system.writes.domains_log_mb_written }} MB</strong>
+      </div>
+    </section>
+  </div>
+
+  <div class="col-xl-6">
+    <section class="panel p-3 h-100">
+      <h2 class="h5 page-title mb-3">Read Metrics</h2>
+      <div class="system-grid">
+        <span>Dashboard Queries Executed</span><strong>{{ system.reads.dashboard_queries_executed }}</strong>
+        <span>Traffic Rows Returned</span><strong>{{ system.reads.traffic_rows_returned }}</strong>
+        <span>DNS Rows Returned</span><strong>{{ system.reads.dns_rows_returned }}</strong>
+        <span>Domain Rows Returned</span><strong>{{ system.reads.domain_rows_returned }}</strong>
+        <span>Alert Rows Returned</span><strong>{{ system.reads.alert_rows_returned }}</strong>
+        <span>Host Rows Returned</span><strong>{{ system.reads.host_rows_returned }}</strong>
+        <span>Total Reads</span><strong>{{ system.reads.total_reads }}</strong>
+        <span>Estimated MB Read</span><strong>{{ system.reads.estimated_mb_read }} MB</strong>
+        <span>Estimated MB/hour</span><strong>{{ "%.4f"|format(system.reads.estimated_mb_per_hour) }}</strong>
+        <span>Estimated MB/day</span><strong>{{ "%.4f"|format(system.reads.estimated_mb_per_day) }}</strong>
+      </div>
+    </section>
+  </div>
+
+  <div class="col-xl-6">
+    <section class="panel p-3 h-100">
+      <h2 class="h5 page-title mb-3">Performance Metrics</h2>
+      <div class="system-grid">
+        <span>Average Write Time</span><strong>{{ system.performance.average_write_ms }} ms</strong>
+        <span>Average Read Time</span><strong>{{ system.performance.average_read_ms }} ms</strong>
+      </div>
+      <hr>
+      <h2 class="h5 page-title mb-3">WAL Mode Check</h2>
+      <div class="system-grid">
+        <span>Journal Mode</span><strong>{{ system.database.journal_mode }}</strong>
+      </div>
+    </section>
+  </div>
+
+  <div class="col-xl-6">
+    <section class="panel p-3 h-100">
+      <h2 class="h5 page-title mb-3">Storage Metrics</h2>
+      <div class="system-grid">
+        <span>Current Database Size</span><strong>{{ system.storage.database_size_mb }} MB</strong>
+        <span>Current domains.log Size</span><strong>{{ system.storage.domains_log_size_mb }} MB</strong>
+        <span>Traffic Table Estimate</span><strong>{{ system.storage.traffic_table_estimate_mb }} MB</strong>
+        <span>DNS Table Estimate</span><strong>{{ system.storage.dns_table_estimate_mb }} MB</strong>
+        <span>Domains Table Estimate</span><strong>{{ system.storage.domains_table_estimate_mb }} MB</strong>
+        <span>Alerts Table Estimate</span><strong>{{ system.storage.alerts_table_estimate_mb }} MB</strong>
+        <span>Hosts Table Estimate</span><strong>{{ system.storage.hosts_table_estimate_mb }} MB</strong>
+      </div>
+    </section>
+  </div>
+
+  <div class="col-xl-6">
+    <section class="panel p-3 h-100">
+      <h2 class="h5 page-title mb-3">Retention Status</h2>
+      <div class="system-grid mb-3">
+        <span>TRAFFIC_MAX_RECORDS</span><strong>{{ system.retention.traffic_max_records }}</strong>
+        <span>Current Traffic Count</span><strong>{{ system.retention.current_traffic_count }}</strong>
+        <span>Traffic Buffer</span>
+        <strong>{{ system.retention.current_traffic_count }} / {{ system.retention.traffic_max_records }} ({{ "%.1f"|format(system.retention.traffic_buffer_percent) }}%)</strong>
+      </div>
+      <div class="progress">
+        <div class="progress-bar" style="width: {{ system.retention.traffic_buffer_percent }}%"></div>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

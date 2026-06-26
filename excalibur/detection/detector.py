@@ -1,0 +1,3 @@
+class Detector:
+    pass
+

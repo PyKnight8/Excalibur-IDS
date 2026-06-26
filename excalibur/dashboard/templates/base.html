@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Excalibur Dashboard</title>
+    <link rel="icon" type="image/png" href="{{ url_for('assets', filename='Excalibur.png') }}">
+    <link href="{{ url_for('static', filename='vendor/bootstrap/css/bootstrap.min.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/theme.css') }}" rel="stylesheet">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand-mark text-decoration-none" href="{{ url_for('index') }}">
+          <img class="brand-logo" src="{{ url_for('assets', filename='Excalibur.png') }}" alt="Excalibur logo">
+          <span>
+            <span class="brand-title d-block">EXCALIBUR</span>
+            <span class="brand-subtitle d-block">Network Detection &amp; Monitoring</span>
+          </span>
+        </a>
+        <nav class="sidebar-nav">
+          <a class="sidebar-link {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            <span>Dashboard</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint == 'traffic' %}active{% endif %}" href="{{ url_for('traffic') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h18"></path><path d="M7 3l-4 4 4 4"></path><path d="M21 17H3"></path><path d="M17 13l4 4-4 4"></path></svg>
+            <span>Traffic</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint == 'hosts' %}active{% endif %}" href="{{ url_for('hosts') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="M8 20h8"></path><path d="M12 16v4"></path></svg>
+            <span>Hosts</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint == 'dns_queries' %}active{% endif %}" href="{{ url_for('dns_queries') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 0 20"></path><path d="M12 2a15.3 15.3 0 0 0 0 20"></path></svg>
+            <span>DNS Queries</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint == 'domains' %}active{% endif %}" href="{{ url_for('domains') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h16"></path><path d="M8 5v14"></path></svg>
+            <span>Domains</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint == 'domain_risk' %}active{% endif %}" href="{{ url_for('domain_risk') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="M9 12l2 2 4-4"></path></svg>
+            <span>Browser Threats</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint == 'alerts' %}active{% endif %}" href="{{ url_for('alerts') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+            <span>Alerts</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint in ['rules', 'save_rules_pack', 'toggle_rule', 'rule_detail'] %}active{% endif %}" href="{{ url_for('rules') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M8 13h8"></path><path d="M8 17h5"></path></svg>
+            <span>Rules</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint in ['plugins', 'toggle_plugin'] %}active{% endif %}" href="{{ url_for('plugins') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 7V4a2 2 0 1 0-4 0v3"></path><path d="M10 17v3a2 2 0 1 0 4 0v-3"></path><path d="M17 10h3a2 2 0 1 0 0-4h-3"></path><path d="M7 14H4a2 2 0 1 0 0 4h3"></path><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>
+            <span>Plugins</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint == 'system_health' %}active{% endif %}" href="{{ url_for('system_health') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 8L9 4l-3 8H2"></path></svg>
+            <span>System Health</span>
+          </a>
+          <a class="sidebar-link {% if request.endpoint == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1A2 2 0 1 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 1z"></path></svg>
+            <span>Settings</span>
+          </a>
+        </nav>
+      </aside>
+      <main class="content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+    <script src="{{ url_for('static', filename='vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
+  </body>
+</html>

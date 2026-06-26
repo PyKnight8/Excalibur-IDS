@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h3 page-title mb-1">Dashboard</h1>
+    <div class="text-muted">Operational visibility for sensor activity and detections</div>
+  </div>
+  <div class="status-pill status-{{ dashboard_metrics.sensor_status }}">
+    Sensor: {{ dashboard_metrics.sensor_status|capitalize }}
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-6 col-xl">
+    <div class="card metric-card metric-blue">
+      <div class="card-body">
+        <div class="metric-label">Alerts Today</div>
+        <div class="metric-value">{{ dashboard_metrics.alerts_today }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl">
+    <div class="card metric-card metric-cyan">
+      <div class="card-body">
+        <div class="metric-label">Total Alerts</div>
+        <div class="metric-value">{{ dashboard_metrics.total_alerts }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl">
+    <div class="card metric-card metric-red">
+      <div class="card-body">
+        <div class="metric-label">Rule Hits</div>
+        <div class="metric-value">{{ dashboard_metrics.rule_hits }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl">
+    <div class="card metric-card metric-purple">
+      <div class="card-body">
+        <div class="metric-label">Hosts Seen</div>
+        <div class="metric-value">{{ dashboard_metrics.hosts_seen }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl">
+    <div class="card metric-card metric-green">
+      <div class="card-body">
+        <div class="metric-label">DNS Queries Today</div>
+        <div class="metric-value">{{ dashboard_metrics.dns_queries_today }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="panel p-3 h-100">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <div class="metric-label">Alerts Per Day</div>
+          <h2 class="h5 page-title mb-0">Last 7 Days</h2>
+        </div>
+      </div>
+      <div class="trend-chart-shell">
+        <svg class="trend-chart" viewBox="0 0 720 260" preserveAspectRatio="none">
+          {% set max_count = (alert_trend | map(attribute='count') | max) if alert_trend else 0 %}
+          {% set chart_max = max_count if max_count > 0 else 1 %}
+          {% for tick in range(0, 5) %}
+          {% set y = 20 + (tick * 50) %}
+          <line class="trend-grid-line" x1="56" y1="{{ y }}" x2="700" y2="{{ y }}"></line>
+          {% endfor %}
+          {% set ns = namespace(points=[]) %}
+          {% for day in alert_trend %}
+          {% set x = 56 + (loop.index0 * 107) %}
+          {% set y = 220 - ((day.count / chart_max) * 180) %}
+          {% set ns.points = ns.points + [x|string ~ "," ~ y|string] %}
+          <circle class="trend-point" cx="{{ x }}" cy="{{ y }}" r="4"></circle>
+          <text class="trend-value-label" x="{{ x }}" y="{{ y - 10 }}">{{ day.count }}</text>
+          <text class="trend-axis-label" x="{{ x }}" y="244">{{ day.label }}</text>
+          {% endfor %}
+          <polyline class="trend-line" points="{{ ns.points | join(' ') }}"></polyline>
+        </svg>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="panel p-3 h-100">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <div class="metric-label">Sensor Activity</div>
+          <h2 class="h5 page-title mb-0">Runtime Counters</h2>
+        </div>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('system_health') }}">Open</a>
+      </div>
+      <div class="ops-list">
+        <div class="ops-row"><span>Packets Processed</span><strong>{{ dashboard_metrics.packets_processed }}</strong></div>
+        <div class="ops-row"><span>DNS Queries</span><strong>{{ dashboard_metrics.dns_queries }}</strong></div>
+        <div class="ops-row"><span>Traffic Records</span><strong>{{ dashboard_metrics.traffic_records }}</strong></div>
+        <div class="ops-row"><span>Alerts Generated</span><strong>{{ dashboard_metrics.alerts_generated }}</strong></div>
+        <div class="ops-row"><span>Database Size</span><strong>{{ system_health.database.size_mb }} MB</strong></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-lg-6">
+    <div class="panel p-3 h-100">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <div class="metric-label">Top Triggered Rules</div>
+          <h2 class="h5 page-title mb-0">Most Active Detections</h2>
+        </div>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('rules') }}">Open</a>
+      </div>
+      {% if top_rules %}
+      <div class="table-responsive">
+        <table class="table data-table align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Rule Name</th>
+              <th>Hits</th>
+              <th>Alerts</th>
+              <th>Last Triggered</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rule in top_rules %}
+            <tr>
+              <td>{{ rule.rule_name }}</td>
+              <td>{{ rule.hits }}</td>
+              <td>{{ rule.alerts }}</td>
+              <td>{{ rule.last_triggered|local_time if rule.last_triggered else "Never" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-muted">No rule activity recorded.</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="panel p-3 h-100">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <div class="metric-label">Most Active Sources</div>
+          <h2 class="h5 page-title mb-0">Alert Sources</h2>
+        </div>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('alerts') }}">Open</a>
+      </div>
+      {% if top_sources %}
+      <div class="table-responsive">
+        <table class="table data-table align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Source IP</th>
+              <th>Alert Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for source in top_sources %}
+            <tr>
+              <td>{{ source.source_ip }}</td>
+              <td>{{ source.alert_count }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-muted">No alert sources recorded.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-12">
+    <div class="panel p-3">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <div class="metric-label">Recent Alerts</div>
+          <h2 class="h5 page-title mb-0">Latest Investigations</h2>
+        </div>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('alerts') }}">Open Alerts</a>
+      </div>
+      {% if recent_alerts %}
+      <div class="table-responsive">
+        <table class="table data-table align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Severity</th>
+              <th>Rule</th>
+              <th>Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for alert in recent_alerts %}
+            {% set severity_class = 'severity-' ~ alert.severity|lower if alert.severity|lower in ['low', 'medium', 'high'] else 'severity-default' %}
+            <tr>
+              <td>{{ alert.timestamp|local_time }}</td>
+              <td><span class="badge badge-severity {{ severity_class }}">{{ alert.severity }}</span></td>
+              <td><a class="text-decoration-none" href="{{ url_for('alert_detail', alert_id=alert.id) }}">{{ alert.title }}</a></td>
+              <td>{{ alert.source_ip or "-" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-muted">No recent alerts recorded.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
