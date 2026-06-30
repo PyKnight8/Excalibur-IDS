@@ -50,7 +50,7 @@ OTX_REFRESH_HOURS=24
 OTX_MAX_INDICATORS=100000
 ```
 
-The repository root [.env.example](./Excalibur/.env.example:1)
+The repository root [.env.example](/home/ibrahim/Tools/Coding/Excalibur/.env.example:1)
 is the canonical list of currently supported Excalibur environment variables.
 Excalibur automatically loads a repository-root `.env` file at startup for both
 the sniffer and dashboard processes.

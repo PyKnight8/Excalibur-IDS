@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Excalibur</vendor>
+  <vendor_url>https://example.invalid/excalibur</vendor_url>
+
+  <action id="org.excalibur.sensor.start">
+    <description>Start the Excalibur sensor</description>
+    <message>Authentication is required to start the Excalibur sensor.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.excalibur.sensor.stop">
+    <description>Stop the Excalibur sensor</description>
+    <message>Authentication is required to stop the Excalibur sensor.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.excalibur.sensor.restart">
+    <description>Restart the Excalibur sensor</description>
+    <message>Authentication is required to restart the Excalibur sensor.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

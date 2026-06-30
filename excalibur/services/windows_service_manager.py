@@ -18,7 +18,9 @@ class WindowsServiceManager:
         status = result.stdout.strip().lower()
         if status == "running":
             return "running"
-        if status in {"stopped", "startpending", "stoppending", "paused", "pausepending"}:
+        if status in {"startpending", "stoppending", "pausepending", "continuepending"}:
+            return "starting"
+        if status in {"stopped", "paused"}:
             return "stopped"
         return "unknown"
 

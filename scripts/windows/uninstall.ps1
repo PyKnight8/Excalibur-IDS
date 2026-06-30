@@ -6,6 +6,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ServiceIds = @("ExcaliburDashboard", "ExcaliburSensor", "ExcaliburHelper")
+$StartupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
+$TrayLauncherPath = Join-Path $StartupDir "ExcaliburTray.cmd"
 
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -56,6 +58,11 @@ foreach ($ServiceId in $ServiceIds) {
     else {
         & sc.exe delete $ServiceId | Out-Host
     }
+}
+
+if (Test-Path -LiteralPath $TrayLauncherPath) {
+    Remove-Item -LiteralPath $TrayLauncherPath -Force
+    Write-Host "[+] Removed tray app launcher from Startup."
 }
 
 if ((Test-Path -LiteralPath $AppDir) -and (Confirm-Choice "Remove application files from $AppDir?")) {

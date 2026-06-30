@@ -22,6 +22,10 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 The installer preserves existing configuration, rules, and plugins under ProgramData. It creates a virtual environment, installs `requirements.txt`, copies the bundled WinSW binary for each service wrapper, registers the services, and starts them. It does not download WinSW from GitHub or any other remote source.
 
+The installer also enables the Excalibur tray app for the current user
+automatically. It adds a Startup launcher and starts the tray immediately after
+installation so the tray becomes the default desktop control surface.
+
 ## Services
 
 | Display name | Service name | Purpose |
@@ -29,6 +33,18 @@ The installer preserves existing configuration, rules, and plugins under Program
 | Excalibur Sensor | `ExcaliburSensor` | Packet capture and detection |
 | Excalibur Dashboard | `ExcaliburDashboard` | Local dashboard on `127.0.0.1:5000` |
 | Excalibur Helper | `ExcaliburHelper` | Windows service-control helper |
+
+## Tray app
+
+The tray app is installed automatically on Windows and runs in the logged-in
+user's desktop session. It uses the Excalibur helper service to open the
+dashboard and control the sensor.
+
+To disable tray auto-start later, remove:
+
+```text
+%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\ExcaliburTray.cmd
+```
 
 ## Default paths
 

@@ -469,7 +469,10 @@ def create_app(
     @app.route("/system")
     def system_health():
         database = get_database()
-        return render_template("system.html", system=database.get_system_health())
+        system = database.get_system_health()
+        if request.args.get("format") == "json":
+            return jsonify(system)
+        return render_template("system.html", system=system)
 
     @app.route("/settings", methods=["GET", "POST"])
     def settings():
@@ -1106,8 +1109,10 @@ def _dashboard_metrics(database, system_health=None):
 
 def _dashboard_alert_trend(database, days=7):
     timezone_name = get_config()["general"]["timezone"]
-    now_local = datetime.now(_resolve_timezone(timezone_name))
-    today_start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    timeline_anchor = _latest_alert_local(database, timezone_name)
+    if timeline_anchor is None:
+        timeline_anchor = datetime.now(_resolve_timezone(timezone_name))
+    today_start_local = timeline_anchor.replace(hour=0, minute=0, second=0, microsecond=0)
     trend = []
     for offset in range(days - 1, -1, -1):
         day_start_local = today_start_local - timedelta(days=offset)
@@ -1122,6 +1127,17 @@ def _dashboard_alert_trend(database, days=7):
             }
         )
     return trend
+
+
+def _latest_alert_local(database, timezone_name):
+    row = database.connection.execute("SELECT MAX(timestamp) FROM alerts").fetchone()
+    timestamp = row[0] if row else None
+    if not timestamp:
+        return None
+    parsed = datetime.fromisoformat(str(timestamp))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(_resolve_timezone(timezone_name))
 
 
 def _dashboard_top_rules(database, limit=10):

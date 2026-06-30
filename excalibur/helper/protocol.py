@@ -2,7 +2,12 @@ import json
 
 
 MAX_MESSAGE_BYTES = 4096
-ALLOWED_ACTIONS = {"sensor_status", "sensor_restart"}
+ALLOWED_ACTIONS = {
+    "sensor_status",
+    "sensor_start",
+    "sensor_stop",
+    "sensor_restart",
+}
 
 
 class ProtocolError(ValueError):

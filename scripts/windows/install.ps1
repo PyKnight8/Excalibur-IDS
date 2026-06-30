@@ -79,6 +79,9 @@ $VenvDir = Join-Path $AppDir ".venv"
 $PythonPath = Join-Path $VenvDir "Scripts\python.exe"
 $ConfigPath = Join-Path $DataDir "config.yaml"
 $RulesConfigPath = Join-Path $DataDir "rules.yaml"
+$StartupDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"
+$TrayLauncherPath = Join-Path $StartupDir "ExcaliburTray.cmd"
+$TrayPythonPath = Join-Path $VenvDir "Scripts\pythonw.exe"
 
 Write-Step "Creating application and runtime directories"
 @($AppDir, $DataDir, $LogDir, $RulesDir, $PluginsDir, $ServicesDir) | ForEach-Object {
@@ -149,9 +152,25 @@ foreach ($ServiceId in $ServiceIds) {
     Start-Service -Name $ServiceId
 }
 
+Write-Step "Desktop installation detected"
+Write-Step "Installing Excalibur System Tray"
+if (-not (Test-Path -LiteralPath $TrayPythonPath)) {
+    $TrayPythonPath = $PythonPath
+}
+New-Item -ItemType Directory -Path $StartupDir -Force | Out-Null
+$TrayLauncher = @"
+@echo off
+cd /d "$AppDir"
+start "" "$TrayPythonPath" -m excalibur.tray.app
+"@
+Set-Content -LiteralPath $TrayLauncherPath -Value $TrayLauncher -Encoding ASCII
+Write-Step "Configuring tray auto-start"
+Start-Process -FilePath $TrayPythonPath -ArgumentList "-m", "excalibur.tray.app" -WorkingDirectory $AppDir
+
 Write-Host ""
 Write-Host "[+] Excalibur installation completed." -ForegroundColor Green
 Get-Service -Name $ServiceIds | Format-Table Name, DisplayName, Status -AutoSize
 Write-Host "Dashboard: http://127.0.0.1:5000"
 Write-Host "Application: $AppDir"
 Write-Host "Runtime data: $DataDir"
+Write-Host "Tray app launcher: $TrayLauncherPath"

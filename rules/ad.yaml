@@ -1,4 +1,4 @@
-signatures: # Active Directory
+signatures:
   - name: SMB Recon
     enabled: true
     event: packet
@@ -11,9 +11,9 @@ signatures: # Active Directory
       dst_port: 445
     exclude:
       dst_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
       src_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
     aggregate:
       unique_dst_ips:
         gte: 15
@@ -34,9 +34,9 @@ signatures: # Active Directory
       dst_port: 3389
     exclude:
       dst_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
       src_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
     aggregate:
       unique_dst_ips:
         gte: 10
@@ -60,9 +60,9 @@ signatures: # Active Directory
           - 5986
     exclude:
       dst_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
       src_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
     aggregate:
       unique_dst_ips:
         gte: 10
@@ -86,9 +86,9 @@ signatures: # Active Directory
           - 636
     exclude:
       dst_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
       src_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
     aggregate:
       unique_dst_ips:
         gte: 10
@@ -109,9 +109,9 @@ signatures: # Active Directory
       dst_port: 88
     exclude:
       dst_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
       src_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
     aggregate:
       unique_dst_ips:
         gte: 10
@@ -141,7 +141,7 @@ signatures: # Active Directory
           - 5986
     exclude:
       dst_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
     aggregate:
       unique_dst_ips:
         gte: 15

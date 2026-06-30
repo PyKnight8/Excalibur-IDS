@@ -1,0 +1,5 @@
+For packet sniffer:
+sudo ./.venv/bin/python ./excalibur/main.py
+
+For flask ui:
+python -m flask --app excalibur/dashboard/app.py run --host=127.0.0.1 --port=5000

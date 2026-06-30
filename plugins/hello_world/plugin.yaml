@@ -1,0 +1,8 @@
+name: Hello World
+id: hello_world
+version: 1.0.0
+author: Excalibur
+description: Logs the event types received by the plugin framework.
+entrypoint: plugin.py
+enabled: false
+

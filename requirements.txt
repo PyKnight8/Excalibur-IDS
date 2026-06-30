@@ -4,3 +4,6 @@ plyer
 requests
 python-dotenv
 tzdata
+psutil
+pystray
+Pillow

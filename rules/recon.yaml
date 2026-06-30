@@ -86,7 +86,7 @@ signatures:
           - 5986
     exclude:
       dst_ip:
-        - 10.0.2.101 # Replace with your Domain Controller IP
+        - 10.0.2.100 # Replace with your Domain Controller IP
     aggregate:
       unique_dst_ports:
         gte: 8

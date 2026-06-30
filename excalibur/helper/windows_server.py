@@ -42,6 +42,12 @@ class WindowsHelperServer(socketserver.ThreadingTCPServer):
                 "ok": True,
                 "status": self.service_manager.status(SENSOR_SERVICE_NAME),
             }
+        if action == "sensor_start":
+            self.service_manager.start(SENSOR_SERVICE_NAME)
+            return {"ok": True}
+        if action == "sensor_stop":
+            self.service_manager.stop(SENSOR_SERVICE_NAME)
+            return {"ok": True}
         if action == "sensor_restart":
             self.service_manager.restart(SENSOR_SERVICE_NAME)
             return {"ok": True}

@@ -58,7 +58,7 @@ class ExcaliburApp:
             database_path = platform_database_path(configured_database_path)
         else:
             database_path = configured_database_path
-        self.database = Database(database_path)
+        self.database = Database(database_path, async_writes=True)
         self.database.reconcile_system_metrics()
         self.notification_manager = NotificationManager(self.config)
         self.database.set_notification_manager(self.notification_manager)

@@ -36,7 +36,7 @@ class Config:
             },
             "ntfy": {
                 "enabled": False,
-                "url": "",
+                "url": "http://ntfyServer:5002/Excalibur-Relay-Notifications",
                 "timeout_seconds": 5,
             },
         },
@@ -139,7 +139,7 @@ class Config:
             "    enabled: false\n"
             "  ntfy:\n"
             "    enabled: false\n"
-            '    url: ""\n'
+            '    url: "http://ntfyServer:5002/Excalibur-Relay-Notifications"\n'
             "    timeout_seconds: 5\n"
             "\n"
             "browser_threat_protection:\n"
@@ -290,7 +290,7 @@ class Config:
             f"    enabled: {str(notifications['desktop'].get('enabled', False)).lower()}",
             "  ntfy:",
             f"    enabled: {str(notifications['ntfy'].get('enabled', False)).lower()}",
-            f'    url: "{notifications["ntfy"].get("url", "")}"',
+            f'    url: "{notifications["ntfy"].get("url", "http://ntfyServer:5002/Excalibur-Relay-Notifications")}"',
             f"    timeout_seconds: {notifications['ntfy'].get('timeout_seconds', 5)}",
             "",
             "browser_threat_protection:",

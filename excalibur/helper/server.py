@@ -20,6 +20,7 @@ else:
         os.chown = _unsupported_chown
 
 from excalibur.helper.protocol import ProtocolError, decode_request, encode_response
+from excalibur.helper.polkit import PolicyKitAuthorizer, PolicyKitError
 from excalibur.helper.service_ops import ServiceOperations, ServiceOpsError
 
 
@@ -47,7 +48,8 @@ def _required_gid():
 
 class HelperRequestHandler(socketserver.StreamRequestHandler):
     def handle(self):
-        if not self.server.is_authorized_peer(self.request):
+        peer_credentials = self.server.get_peer_credentials(self.request)
+        if not self.server.is_authorized_peer(peer_credentials):
             self.wfile.write(
                 encode_response({"ok": False, "error": "Unauthorized peer."})
             )
@@ -56,10 +58,12 @@ class HelperRequestHandler(socketserver.StreamRequestHandler):
         request_bytes = self.rfile.readline(4097)
         try:
             payload = decode_request(request_bytes)
-            response = self.server.dispatch(payload["action"])
+            response = self.server.dispatch(payload["action"], peer_credentials)
         except ProtocolError as exc:
             response = {"ok": False, "error": str(exc)}
         except ServiceOpsError as exc:
+            response = {"ok": False, "error": str(exc)}
+        except PolicyKitError as exc:
             response = {"ok": False, "error": str(exc)}
         except Exception as exc:
             response = {"ok": False, "error": f"Unexpected helper failure: {exc}"}
@@ -72,15 +76,16 @@ class HelperServer(_ThreadingUnixStreamServer):
 
     def __init__(self, server_address, handler_class, service_operations=None):
         self.service_operations = service_operations or ServiceOperations()
+        self.policy_authorizer = PolicyKitAuthorizer()
         self.allowed_uid = _required_uid()
         self.allowed_gid = _required_gid()
         super().__init__(server_address, handler_class)
         os.chown(server_address, 0, self.allowed_gid)
         os.chmod(server_address, 0o660)
 
-    def is_authorized_peer(self, connection):
-        pid, uid, gid = self.get_peer_credentials(connection)
-        return uid == self.allowed_uid
+    def is_authorized_peer(self, peer_credentials):
+        _pid, uid, _gid = peer_credentials
+        return uid >= 0
 
     def get_peer_credentials(self, connection):
         creds = connection.getsockopt(
@@ -97,9 +102,17 @@ class HelperServer(_ThreadingUnixStreamServer):
         finally:
             super().server_close()
 
-    def dispatch(self, action):
+    def dispatch(self, action, peer_credentials):
+        peer_pid, peer_uid, _peer_gid = peer_credentials
         if action == "sensor_status":
             return {"ok": True, "status": self.service_operations.sensor_status()}
+        self.policy_authorizer.authorize(action, peer_pid, peer_uid)
+        if action == "sensor_start":
+            self.service_operations.sensor_start()
+            return {"ok": True}
+        if action == "sensor_stop":
+            self.service_operations.sensor_stop()
+            return {"ok": True}
         if action == "sensor_restart":
             self.service_operations.sensor_restart()
             return {"ok": True}

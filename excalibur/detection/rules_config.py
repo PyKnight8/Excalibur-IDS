@@ -4,7 +4,7 @@ from pathlib import Path
 class RulesConfig:
     DEFAULT_GLOBAL = {
         "exclude_own_ips": True,
-        "excluded_sources": [""] #["192.168.x.x"], # exclusions
+        "excluded_sources": [""], # Exclusions
     }
     DEFAULT_RULES = [
         {

@@ -10,3 +10,4 @@ excalibur.sqlite-wal
 config.yaml
 third_party/python/*.exe
 third_party/npcap/*.exe
+dist/

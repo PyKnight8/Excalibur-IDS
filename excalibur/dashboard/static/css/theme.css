@@ -213,6 +213,17 @@ a:hover {
   width: 100%;
 }
 
+.history-chart-shell {
+  min-height: 260px;
+  width: 100%;
+}
+
+.history-chart {
+  display: block;
+  height: 260px;
+  width: 100%;
+}
+
 .trend-grid-line {
   stroke: rgba(148, 163, 184, .22);
   stroke-width: 1;
@@ -241,6 +252,33 @@ a:hover {
   fill: var(--text);
   font-weight: 700;
 }
+
+.history-legend {
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: .82rem;
+}
+
+.history-legend span {
+  align-items: center;
+  display: inline-flex;
+  gap: .45rem;
+}
+
+.legend-dot {
+  border-radius: 999px;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+
+.legend-blue { background: #60a5fa; }
+.legend-cyan { background: #22d3ee; }
+.legend-purple { background: #c084fc; }
+.legend-green { background: #4ade80; }
+.legend-red { background: #f87171; }
 
 .ops-list {
   display: grid;
