@@ -30,7 +30,7 @@ database:
 setting is missing, Excalibur defaults to `excalibur.sqlite`.
 
 Environment-variable based settings for Excalibur core and official plugins are
-documented in [.env.example](/home/ibrahim/Tools/Coding/Excalibur/.env.example:1).
+documented in [.env.example](.env.example).
 This is the canonical list of currently supported environment variables.
 Excalibur now automatically loads a repository-root `.env` file at startup for
 both the sniffer and dashboard processes. Existing environment variables still

@@ -1158,7 +1158,12 @@ class SignatureEngineTest(unittest.TestCase):
         self.assertEqual(alert["description"], "Source contacted many hosts via SMB.")
         self.assertEqual(alert["source_ip"], "10.0.0.10")
         self.assertEqual(alert["destination_ip"], "10.0.0.1")
-        self.assertEqual(json.loads(alert["context_json"])["count"], 1)
+        context = json.loads(alert["context_json"])
+        self.assertEqual(context["rule"]["name"], "Test Signature")
+        self.assertEqual(context["rule"]["pack"], "rules/*.yaml")
+        self.assertEqual(context["rule"]["thresholds"]["count"], 1)
+        self.assertEqual(context["evidence"]["observed"]["count"], 1)
+        self.assertEqual(context["evidence"]["window_seconds"], 60)
 
     def test_group_by_source_sets_alert_source_and_context(self):
         engine = SignatureEngine(
@@ -1176,8 +1181,11 @@ class SignatureEngineTest(unittest.TestCase):
 
         self.assertEqual(alert["source_ip"], "10.0.0.20")
         self.assertIsNone(alert["destination_ip"])
-        self.assertEqual(context["group_by"], "src_ip")
-        self.assertEqual(context["unique_dst_ips"], 2)
+        self.assertEqual(context["rule"]["name"], "Test Signature")
+        self.assertEqual(context["rule"]["pack"], "rules/*.yaml")
+        self.assertEqual(context["rule"]["thresholds"]["unique_dst_ips"], 2)
+        self.assertEqual(context["evidence"]["observed"]["group_by"], "src_ip")
+        self.assertEqual(context["evidence"]["observed"]["unique_dst_ips"], 2)
 
     def test_group_by_destination_sets_alert_destination_and_context(self):
         engine = SignatureEngine(
@@ -1195,8 +1203,11 @@ class SignatureEngineTest(unittest.TestCase):
 
         self.assertIsNone(alert["source_ip"])
         self.assertEqual(alert["destination_ip"], "10.0.0.50")
-        self.assertEqual(context["group_by"], "dst_ip")
-        self.assertEqual(context["unique_dst_ports"], 2)
+        self.assertEqual(context["rule"]["name"], "Test Signature")
+        self.assertEqual(context["rule"]["pack"], "rules/*.yaml")
+        self.assertEqual(context["rule"]["thresholds"]["unique_dst_ports"], 2)
+        self.assertEqual(context["evidence"]["observed"]["group_by"], "dst_ip")
+        self.assertEqual(context["evidence"]["observed"]["unique_dst_ports"], 2)
 
     def test_disabled_rules_do_not_run(self):
         engine = SignatureEngine(
@@ -1677,8 +1688,8 @@ class SignatureEngineTest(unittest.TestCase):
         html = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Rules Summary", html)
-        self.assertIn("Total Rules", html)
+        self.assertIn("Top Triggered Rules", html)
+        self.assertIn("Most Active Detections", html)
         self.assertIn("SMB Recon", html)
 
     def test_legacy_settings_signatures_route_redirects(self):

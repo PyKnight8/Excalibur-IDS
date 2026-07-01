@@ -3,6 +3,8 @@ from tempfile import TemporaryDirectory
 import io
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime as real_datetime, timezone
+from unittest.mock import patch
 
 from excalibur.database import Database
 from excalibur.events import AlertEvent, PacketEvent
@@ -151,7 +153,7 @@ class PluginManagerTest(unittest.TestCase):
 class PacketSnifferPluginIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = TemporaryDirectory()
-        self.database = Database(Path(self.temp_dir.name) / "test.sqlite")
+        self.database = Database(Path(self.temp_dir.name) / "test.sqlite", async_writes=True)
 
     def tearDown(self):
         self.database.close()
@@ -183,6 +185,87 @@ class PacketSnifferPluginIntegrationTest(unittest.TestCase):
 
         self.assertIn("packet_event", received_event_types)
         self.assertIn("dns_event", received_event_types)
+
+    def test_same_flow_packets_still_emit_per_packet_plugin_events_with_aggregation(self):
+        if IP is None:
+            self.skipTest("scapy is not installed")
+
+        from scapy.all import Raw, TCP
+        from excalibur.sensor.sniffer import PacketSniffer
+
+        event_bus = EventBus()
+        received_events = []
+        event_bus.subscribe("packet_event", lambda event: received_events.append(event))
+        expected_sizes = []
+
+        sniffer = PacketSniffer(
+            database=self.database,
+            packet_log_interval=None,
+            event_bus=event_bus,
+        )
+        sniffer.detector_manager = _CollectingDetectorManager()
+
+        class _FakeDateTime:
+            counter = 0
+
+            @classmethod
+            def now(cls, tz=None):
+                current = real_datetime(
+                    2026,
+                    7,
+                    1,
+                    12,
+                    0,
+                    0,
+                    cls.counter * 1000,
+                    tzinfo=timezone.utc,
+                )
+                cls.counter += 1
+                return current
+
+        with patch("excalibur.sensor.sniffer.datetime", _FakeDateTime):
+            for index in range(20):
+                payload = bytes([65 + (index % 26)]) * (index + 1)
+                packet = (
+                    IP(src="10.0.0.10", dst="10.0.0.1")
+                    / TCP(sport=53000, dport=443, flags="S")
+                    / Raw(load=payload)
+                )
+                expected_sizes.append(len(packet))
+                sniffer._handle_packet(packet)
+
+        self.assertEqual(len(received_events), 20)
+        self.assertEqual(self.database.count_traffic_packets(), 20)
+
+        rows, total = self.database.get_traffic(sort_by="timestamp", sort_order="ASC")
+        self.assertLess(total, 20)
+        self.assertEqual(total, 1)
+        self.assertEqual(rows[0]["packet_count"], 20)
+
+        for index, event in enumerate(received_events):
+            expected_timestamp = real_datetime(
+                2026,
+                7,
+                1,
+                12,
+                0,
+                0,
+                index * 1000,
+                tzinfo=timezone.utc,
+            ).isoformat()
+            self.assertEqual(event.timestamp, expected_timestamp)
+            self.assertEqual(event.src_ip, "10.0.0.10")
+            self.assertEqual(event.dst_ip, "10.0.0.1")
+            self.assertEqual(event.src_port, 53000)
+            self.assertEqual(event.dst_port, 443)
+            self.assertEqual(event.protocol, "TCP")
+            self.assertEqual(event.tcp_flags, "S")
+            self.assertEqual(event.packet_size, expected_sizes[index])
+
+        self.assertEqual(
+            [event.packet_size for event in received_events],
+            expected_sizes,
+        )
 
 
 class AlertEventIntegrationTest(unittest.TestCase):

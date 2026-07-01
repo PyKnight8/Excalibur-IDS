@@ -1,7 +1,10 @@
 import os
 import sys
+import traceback
 from pathlib import Path
-from threading import Event
+from threading import Event, enumerate as enumerate_threads
+
+import psutil
 
 
 if __package__ is None or __package__ == "":
@@ -25,6 +28,93 @@ from excalibur.paths import (
 )
 from excalibur.plugins import EventBus, PluginManager
 from excalibur.sensor import PacketSniffer
+
+
+def _safe_process_value(getter, default=None):
+    try:
+        return getter()
+    except (psutil.Error, OSError):
+        return default
+
+
+def _is_service_tree_process(process):
+    name = str(_safe_process_value(process.name, "") or "").lower()
+    exe = str(_safe_process_value(process.exe, "") or "").lower().replace("\\", "/")
+    cmdline = " ".join(_safe_process_value(process.cmdline, []) or []).lower().replace(
+        "\\", "/"
+    )
+    return (
+        "python" in name
+        or "python" in exe
+        or "excalibur" in name
+        or "excalibur" in exe
+        or "excalibur" in cmdline
+    )
+
+
+def _service_tree_root(process):
+    current = process
+    while True:
+        parent = _safe_process_value(current.parent)
+        if parent is None or not _is_service_tree_process(parent):
+            return current
+        current = parent
+
+
+def _walk_tree(process):
+    nodes = [process]
+    for child in _safe_process_value(lambda: process.children(), []) or []:
+        nodes.extend(_walk_tree(child))
+    return nodes
+
+
+def _log_process_snapshot(label):
+    process = psutil.Process(os.getpid())
+    root = _service_tree_root(process)
+    print(f"[ProcTree] {label}", flush=True)
+    print(f"[ProcTree]   current_pid={process.pid}", flush=True)
+    print(f"[ProcTree]   root_pid={root.pid}", flush=True)
+    print(
+        "[ProcTree]   threads="
+        f"{[(thread.name, thread.ident) for thread in enumerate_threads()]}",
+        flush=True,
+    )
+    for node in _walk_tree(root):
+        if not _is_service_tree_process(node):
+            continue
+        memory_info = _safe_process_value(node.memory_info)
+        print(f"[ProcTree]   pid={node.pid}", flush=True)
+        print(
+            f"[ProcTree]     parent_pid={getattr(_safe_process_value(node.parent), 'pid', None)}",
+            flush=True,
+        )
+        print(f"[ProcTree]     name={_safe_process_value(node.name)}", flush=True)
+        print(f"[ProcTree]     exe={_safe_process_value(node.exe)}", flush=True)
+        print(
+            f"[ProcTree]     cmdline={' '.join(_safe_process_value(node.cmdline, []) or [])}",
+            flush=True,
+        )
+        print(
+            f"[ProcTree]     create_time={_safe_process_value(node.create_time)}",
+            flush=True,
+        )
+        print(
+            f"[ProcTree]     rss_bytes={getattr(memory_info, 'rss', None)}",
+            flush=True,
+        )
+        print(
+            "[ProcTree]     cpu_percent_raw="
+            f"{_safe_process_value(lambda node=node: node.cpu_percent(interval=None))}",
+            flush=True,
+        )
+        print(
+            f"[ProcTree]     thread_count={_safe_process_value(node.num_threads)}",
+            flush=True,
+        )
+        print(
+            f"[ProcTree]     children={[getattr(child, 'pid', None) for child in (_safe_process_value(node.children, []) or [])]}",
+            flush=True,
+        )
 
 
 class ExcaliburApp:
@@ -73,6 +163,16 @@ class ExcaliburApp:
             ),
         )
         print("[+] Database initialized", flush=True)
+        print(
+            "[Startup] "
+            f"config_path={config_path} "
+            f"rules_path={rules_path} "
+            f"signature_rules_dir={signature_rules_dir} "
+            f"database_path={database_path} "
+            f"interface={interface!r}",
+            flush=True,
+        )
+        _log_process_snapshot("after_init")
 
         self.sniffer = PacketSniffer(
             database=self.database,
@@ -86,9 +186,12 @@ class ExcaliburApp:
 
     def run(self):
         try:
+            _log_process_snapshot("before_plugin_startup")
             self.plugin_manager.load_plugins()
             self.plugin_manager.startup_plugins()
+            _log_process_snapshot("before_sniffer_start")
             self.sniffer.start()
+            _log_process_snapshot("after_sniffer_start")
             print("[+] Packet sniffer started", flush=True)
             print("[+] Excalibur running", flush=True)
 
@@ -96,6 +199,10 @@ class ExcaliburApp:
                 self._shutdown_event.wait(timeout=0.5)
         except KeyboardInterrupt:
             pass
+        except Exception as exc:
+            print(f"[ERROR] Sensor startup/runtime failure: {exc}", flush=True)
+            print(traceback.format_exc(), flush=True)
+            raise
         finally:
             print("[+] Shutting down", flush=True)
             self.sniffer.stop()

@@ -1,3 +1,5 @@
+import time
+
 from excalibur.detection.dns_flood import DNSFloodDetector
 from excalibur.detection.host_sweep import HostSweepDetector
 from excalibur.detection.own_ips import discover_own_ips
@@ -45,19 +47,37 @@ class DetectorManager:
     def register(self, detector):
         self.detectors.append(detector)
 
-    def process(self, packet_info):
+    def process(self, packet_info, perf_stats=None):
+        perf_stats = perf_stats if perf_stats is not None else {}
+        builtins_started_at = time.perf_counter()
         for detector in self.detectors:
             process_packet = getattr(detector, "process_packet", None)
             if process_packet:
                 process_packet(packet_info)
+        perf_stats["detectors_builtin_ms"] = perf_stats.get("detectors_builtin_ms", 0.0) + (
+            (time.perf_counter() - builtins_started_at) * 1000
+        )
+        signatures_started_at = time.perf_counter()
         self.signature_engine.process_packet(packet_info)
+        perf_stats["detectors_signature_ms"] = perf_stats.get(
+            "detectors_signature_ms", 0.0
+        ) + ((time.perf_counter() - signatures_started_at) * 1000)
 
-    def process_dns_query(self, dns_info):
+    def process_dns_query(self, dns_info, perf_stats=None):
+        perf_stats = perf_stats if perf_stats is not None else {}
+        builtins_started_at = time.perf_counter()
         for detector in self.detectors:
             process_dns_query = getattr(detector, "process_dns_query", None)
             if process_dns_query:
                 process_dns_query(dns_info)
+        perf_stats["detectors_builtin_ms"] = perf_stats.get("detectors_builtin_ms", 0.0) + (
+            (time.perf_counter() - builtins_started_at) * 1000
+        )
+        signatures_started_at = time.perf_counter()
         self.signature_engine.process_dns_query(dns_info)
+        perf_stats["detectors_signature_ms"] = perf_stats.get(
+            "detectors_signature_ms", 0.0
+        ) + ((time.perf_counter() - signatures_started_at) * 1000)
 
     def _build_detectors(self):
         detectors = []

@@ -1314,12 +1314,16 @@ def _alert_details_payload(database, alert):
             "traffic": [
                 {
                     "timestamp": row["timestamp"],
+                    "first_seen": row["first_seen"],
+                    "last_seen": row["last_seen"],
                     "src_ip": row["src_ip"],
                     "dst_ip": row["dst_ip"],
                     "protocol": row["protocol"],
                     "src_port": row["src_port"],
                     "dst_port": row["dst_port"],
                     "packet_size": row["packet_size"],
+                    "packet_count": row["packet_count"],
+                    "byte_count": row["byte_count"],
                 }
                 for row in database.get_recent_traffic_for_source(source_ip, limit=20)
             ],
@@ -1433,6 +1437,8 @@ def _active_query_params(search, filters, sort_by, sort_order):
 def _traffic_sort_urls(current_sort_by, current_sort_order, query_params, page):
     columns = [
         "timestamp",
+        "first_seen",
+        "last_seen",
         "src_ip",
         "dst_ip",
         "protocol",
@@ -1440,6 +1446,8 @@ def _traffic_sort_urls(current_sort_by, current_sort_order, query_params, page):
         "dst_port",
         "service",
         "packet_size",
+        "packet_count",
+        "byte_count",
     ]
     return _sort_urls("traffic", columns, current_sort_by, current_sort_order, query_params, page)
 

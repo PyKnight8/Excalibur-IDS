@@ -5,7 +5,7 @@ Excalibur includes a lightweight in-process plugin framework for extending the s
 This document describes the plugin system that is implemented today. It does not describe the original Phase 4 design in the abstract. If the code and this guide ever disagree, the code is the source of truth.
 
 Environment-variable based settings for Excalibur core and official plugins are
-documented in [.env.example](/home/ibrahim/Tools/Coding/Excalibur/.env.example:1).
+documented in [.env.example](../.env.example).
 Excalibur automatically loads a repository-root `.env` file at startup for both
 the sniffer and dashboard processes, without overriding already-set
 environment variables.
@@ -94,7 +94,7 @@ Current parser behavior:
 
 ## Plugin Lifecycle
 
-Plugins inherit from [excalibur/plugins/base.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/plugins/base.py:1):
+Plugins inherit from [excalibur/plugins/base.py](../excalibur/plugins/base.py):
 
 ```python
 class Plugin:
@@ -158,7 +158,7 @@ class Plugin(Plugin):
 
 ## PluginContext API
 
-Plugins receive a `PluginContext` object from [excalibur/plugins/context.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/plugins/context.py:1).
+Plugins receive a `PluginContext` object from [excalibur/plugins/context.py](../excalibur/plugins/context.py).
 
 Current API:
 
@@ -195,7 +195,7 @@ This is synchronous and immediate. There is no queue, no worker thread, and no b
 
 ## EventBus Behavior
 
-The event bus is implemented in [excalibur/plugins/event_bus.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/plugins/event_bus.py:1).
+The event bus is implemented in [excalibur/plugins/event_bus.py](../excalibur/plugins/event_bus.py).
 
 Current behavior:
 
@@ -240,7 +240,7 @@ event.timestamp
 
 ### PacketEvent
 
-From [excalibur/events/packet.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/events/packet.py:1):
+From [excalibur/events/packet.py](../excalibur/events/packet.py):
 
 - `event.event_type == "packet_event"`
 - `timestamp`
@@ -255,7 +255,7 @@ From [excalibur/events/packet.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur
 
 ### DnsEvent
 
-From [excalibur/events/dns.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/events/dns.py:1):
+From [excalibur/events/dns.py](../excalibur/events/dns.py):
 
 - `event.event_type == "dns_event"`
 - `timestamp`
@@ -270,7 +270,7 @@ From [excalibur/events/dns.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/ev
 
 ### AlertEvent
 
-From [excalibur/events/alert.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/events/alert.py:1):
+From [excalibur/events/alert.py](../excalibur/events/alert.py):
 
 - `event.event_type == "alert_event"`
 - `timestamp`
@@ -286,7 +286,7 @@ From [excalibur/events/alert.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/
 
 ## How Plugins Are Loaded at Sensor Startup
 
-Plugin startup happens in [excalibur/main.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/main.py:1).
+Plugin startup happens in [excalibur/main.py](../excalibur/main.py).
 
 At startup Excalibur:
 
@@ -306,7 +306,7 @@ This means:
 
 ## Plugin Discovery and Loading Process
 
-The loader is implemented in [excalibur/plugins/manager.py](/home/ibrahim/Tools/Coding/Excalibur/excalibur/plugins/manager.py:1).
+The loader is implemented in [excalibur/plugins/manager.py](../excalibur/plugins/manager.py).
 
 Discovery process:
 
@@ -475,8 +475,8 @@ The AbuseIPDB proof-of-concept plugin is a good example of how to build a real p
 
 Source:
 
-- [plugins/abuseipdb/plugin.yaml](/home/ibrahim/Tools/Coding/Excalibur/plugins/abuseipdb/plugin.yaml:1)
-- [plugins/abuseipdb/plugin.py](/home/ibrahim/Tools/Coding/Excalibur/plugins/abuseipdb/plugin.py:1)
+- [plugins/abuseipdb/plugin.yaml](../plugins/abuseipdb/plugin.yaml)
+- [plugins/abuseipdb/plugin.py](../plugins/abuseipdb/plugin.py)
 
 ### What it does
 

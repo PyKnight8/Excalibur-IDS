@@ -37,7 +37,12 @@ class DetectionRulesTest(unittest.TestCase):
         self.assertIn("made 3 DNS queries", alerts[0]["description"])
         self.assertEqual(alerts[0]["source_ip"], "10.0.0.10")
         self.assertEqual(alerts[0]["destination_ip"], "10.0.0.1")
-        self.assertEqual(json.loads(alerts[0]["context_json"])["dns_queries"], 3)
+        context = json.loads(alerts[0]["context_json"])
+        self.assertEqual(context["rule"]["name"], "DNS Flood")
+        self.assertEqual(context["rule"]["pack"], "builtin")
+        self.assertEqual(context["rule"]["thresholds"]["dns_queries"], 3)
+        self.assertEqual(context["evidence"]["observed"]["dns_queries"], 3)
+        self.assertEqual(context["evidence"]["window_seconds"], 60)
 
     def test_dns_flood_below_threshold_does_not_alert(self):
         detector = DNSFloodDetector(self.database, self._rule("dns_flood", threshold=3))
@@ -62,7 +67,12 @@ class DetectionRulesTest(unittest.TestCase):
         self.assertIn("queried 3 unique domains", alerts[0]["description"])
         self.assertEqual(alerts[0]["source_ip"], "10.0.0.10")
         self.assertEqual(alerts[0]["destination_ip"], "10.0.0.1")
-        self.assertEqual(json.loads(alerts[0]["context_json"])["unique_domains"], 3)
+        context = json.loads(alerts[0]["context_json"])
+        self.assertEqual(context["rule"]["name"], "Excessive Unique Domains")
+        self.assertEqual(context["rule"]["pack"], "builtin")
+        self.assertEqual(context["rule"]["thresholds"]["unique_domains"], 3)
+        self.assertEqual(context["evidence"]["observed"]["unique_domains"], 3)
+        self.assertEqual(context["evidence"]["window_seconds"], 60)
 
     def test_repeated_same_domain_does_not_count_as_unique(self):
         detector = UniqueDomainDetector(
@@ -87,7 +97,13 @@ class DetectionRulesTest(unittest.TestCase):
         self.assertIn("contacted 3 unique hosts on port 445", alerts[0]["description"])
         self.assertEqual(alerts[0]["source_ip"], "10.0.0.10")
         self.assertEqual(alerts[0]["destination_ip"], "10.0.0.3")
-        self.assertEqual(json.loads(alerts[0]["context_json"])["unique_dst_ips"], 3)
+        context = json.loads(alerts[0]["context_json"])
+        self.assertEqual(context["rule"]["name"], "Host Sweep")
+        self.assertEqual(context["rule"]["pack"], "builtin")
+        self.assertEqual(context["rule"]["thresholds"]["unique_dst_ips"], 3)
+        self.assertEqual(context["evidence"]["observed"]["unique_dst_ips"], 3)
+        self.assertEqual(context["evidence"]["observed"]["dst_port"], 445)
+        self.assertEqual(context["evidence"]["window_seconds"], 60)
 
     def test_host_sweep_below_threshold_does_not_alert(self):
         detector = HostSweepDetector(self.database, self._rule("host_sweep", threshold=3))

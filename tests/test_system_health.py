@@ -203,6 +203,9 @@ class SystemHealthTest(unittest.TestCase):
             def cpu_percent(self, interval=None):
                 return 0.0
 
+            def create_time(self):
+                return float(self.pid)
+
         helper = _FakeProcess(
             {
                 "pid": 10,
@@ -235,8 +238,278 @@ class SystemHealthTest(unittest.TestCase):
         self.assertTrue(
             any("Selected sensor process on Windows" in line for line in printed_lines)
         )
+        self.assertTrue(
+            any(
+                "Selection reason: process_enumeration_fallback" in line
+                for line in printed_lines
+            )
+        )
         self.assertTrue(any("PID: 11" in line for line in printed_lines))
         self.assertTrue(any("PID: 10" in line for line in printed_lines))
+
+    def test_sensor_process_prefers_windows_service_pid(self):
+        class _FakeProcess:
+            def __init__(self, info):
+                self.info = info
+                self.pid = info["pid"]
+                self._children = []
+
+            def cpu_percent(self, interval=None):
+                return 0.0
+
+            def as_dict(self, attrs=None):
+                return dict(self.info)
+
+            def create_time(self):
+                return float(self.pid)
+
+            def children(self, recursive=False):
+                return list(self._children)
+
+        helper = _FakeProcess(
+            {
+                "pid": 10,
+                "cmdline": [r"C:\Python\python.exe", "-m", "excalibur.helper.windows_server"],
+                "exe": r"C:\Python\python.exe",
+                "name": "python.exe",
+            }
+        )
+        manual_sensor = _FakeProcess(
+            {
+                "pid": 11,
+                "cmdline": [r"C:\Python\python.exe", r"D:\Excalibur\excalibur\main.py"],
+                "exe": r"C:\Python\python.exe",
+                "name": "python.exe",
+            }
+        )
+        service_sensor = _FakeProcess(
+            {
+                "pid": 22,
+                "cmdline": [r"C:\Program Files\Excalibur\.venv\Scripts\python.exe", r"D:\Excalibur\excalibur\main.py"],
+                "exe": r"C:\Program Files\Excalibur\.venv\Scripts\python.exe",
+                "name": "python.exe",
+            }
+        )
+        service_mock = unittest.mock.Mock()
+        service_mock.as_dict.return_value = {"pid": 22, "status": "running"}
+
+        with patch("excalibur.database.db._SENSOR_PROCESS_HANDLE", None):
+            with patch("excalibur.database.db._SENSOR_PROCESS_PID", None):
+                with patch("excalibur.database.db.os.name", "nt"):
+                    with patch(
+                        "excalibur.database.db.psutil.process_iter",
+                        return_value=[helper, manual_sensor],
+                    ):
+                        with patch(
+                            "excalibur.database.db.psutil.win_service_get",
+                            return_value=service_mock,
+                            create=True,
+                        ):
+                            with patch(
+                                "excalibur.database.db.psutil.Process",
+                                return_value=service_sensor,
+                            ):
+                                with patch("builtins.print") as print_mock:
+                                    selected = Database._sensor_process()
+
+        self.assertIs(selected, service_sensor)
+        printed_lines = [" ".join(str(arg) for arg in call.args) for call in print_mock.call_args_list]
+        self.assertTrue(
+            any("Selection reason: windows_service_lookup" in line for line in printed_lines)
+        )
+        self.assertTrue(any("PID: 22" in line for line in printed_lines))
+
+    def test_sensor_process_prefers_windows_service_child_worker(self):
+        class _FakeProcess:
+            def __init__(self, info, children=None):
+                self.info = info
+                self.pid = info["pid"]
+                self._children = list(children or [])
+
+            def cpu_percent(self, interval=None):
+                return 0.0
+
+            def as_dict(self, attrs=None):
+                return dict(self.info)
+
+            def create_time(self):
+                return float(self.pid)
+
+            def children(self, recursive=False):
+                if not recursive:
+                    return list(self._children)
+                descendants = []
+                for child in self._children:
+                    descendants.append(child)
+                    descendants.extend(child.children(recursive=True))
+                return descendants
+
+        service_child = _FakeProcess(
+            {
+                "pid": 33,
+                "cmdline": [r"C:\Program Files\Excalibur\.venv\Scripts\python.exe", r"D:\Excalibur\excalibur\main.py"],
+                "exe": r"C:\Program Files\Excalibur\.venv\Scripts\python.exe",
+                "name": "python.exe",
+            }
+        )
+        service_parent = _FakeProcess(
+            {
+                "pid": 22,
+                "cmdline": [r"C:\Program Files\Excalibur\.venv\Scripts\python.exe", r"D:\Excalibur\excalibur\main.py"],
+                "exe": r"C:\Program Files\Excalibur\.venv\Scripts\python.exe",
+                "name": "python.exe",
+            },
+            children=[service_child],
+        )
+        service_mock = unittest.mock.Mock()
+        service_mock.as_dict.return_value = {"pid": 22, "status": "running"}
+
+        with patch("excalibur.database.db._SENSOR_PROCESS_HANDLE", None):
+            with patch("excalibur.database.db._SENSOR_PROCESS_PID", None):
+                with patch("excalibur.database.db.os.name", "nt"):
+                    with patch(
+                        "excalibur.database.db.psutil.process_iter",
+                        return_value=[service_parent, service_child],
+                    ):
+                        with patch(
+                            "excalibur.database.db.psutil.win_service_get",
+                            return_value=service_mock,
+                            create=True,
+                        ):
+                            with patch(
+                                "excalibur.database.db.psutil.Process",
+                                return_value=service_parent,
+                            ):
+                                with patch("builtins.print") as print_mock:
+                                    selected = Database._sensor_process()
+
+        self.assertIs(selected, service_child)
+        printed_lines = [" ".join(str(arg) for arg in call.args) for call in print_mock.call_args_list]
+        self.assertTrue(
+            any(
+                "Selection reason: windows_service_child_worker" in line
+                for line in printed_lines
+            )
+        )
+        self.assertTrue(any("PID: 33" in line for line in printed_lines))
+
+    def test_sensor_process_prefers_deepest_windows_service_child_worker(self):
+        class _FakeProcess:
+            def __init__(self, info, children=None):
+                self.info = info
+                self.pid = info["pid"]
+                self._children = list(children or [])
+
+            def cpu_percent(self, interval=None):
+                return 0.0
+
+            def as_dict(self, attrs=None):
+                return dict(self.info)
+
+            def create_time(self):
+                return float(self.pid)
+
+            def children(self, recursive=False):
+                if not recursive:
+                    return list(self._children)
+                descendants = []
+                for child in self._children:
+                    descendants.append(child)
+                    descendants.extend(child.children(recursive=True))
+                return descendants
+
+        deepest_worker = _FakeProcess(
+            {
+                "pid": 44,
+                "cmdline": [r"C:\Program Files\Excalibur\.venv\Scripts\python.exe", r"D:\Excalibur\excalibur\main.py"],
+                "exe": r"C:\Python313\python.exe",
+                "name": "python.exe",
+            }
+        )
+        intermediate_worker = _FakeProcess(
+            {
+                "pid": 33,
+                "cmdline": [r"C:\Program Files\Excalibur\.venv\Scripts\python.exe", r"D:\Excalibur\excalibur\main.py"],
+                "exe": r"C:\Program Files\Excalibur\.venv\Scripts\python.exe",
+                "name": "python.exe",
+            },
+            children=[deepest_worker],
+        )
+        service_parent = _FakeProcess(
+            {
+                "pid": 22,
+                "cmdline": [r"C:\Program Files\Excalibur\.venv\Scripts\python.exe", r"D:\Excalibur\excalibur\main.py"],
+                "exe": r"C:\Program Files\Excalibur\.venv\Scripts\python.exe",
+                "name": "python.exe",
+            },
+            children=[intermediate_worker],
+        )
+        service_mock = unittest.mock.Mock()
+        service_mock.as_dict.return_value = {"pid": 22, "status": "running"}
+
+        with patch("excalibur.database.db._SENSOR_PROCESS_HANDLE", None):
+            with patch("excalibur.database.db._SENSOR_PROCESS_PID", None):
+                with patch("excalibur.database.db.os.name", "nt"):
+                    with patch(
+                        "excalibur.database.db.psutil.process_iter",
+                        return_value=[service_parent, intermediate_worker, deepest_worker],
+                    ):
+                        with patch(
+                            "excalibur.database.db.psutil.win_service_get",
+                            return_value=service_mock,
+                            create=True,
+                        ):
+                            with patch(
+                                "excalibur.database.db.psutil.Process",
+                                return_value=service_parent,
+                            ):
+                                selected = Database._sensor_process()
+
+        self.assertIs(selected, deepest_worker)
+
+    def test_sensor_process_invalidates_cached_pid_when_create_time_changes(self):
+        class _CachedProcess:
+            pid = 44
+
+            def is_running(self):
+                return True
+
+            def create_time(self):
+                return 2000.0
+
+        class _FreshProcess:
+            def __init__(self, info, create_time_value):
+                self.info = info
+                self.pid = info["pid"]
+                self._create_time = create_time_value
+
+            def cpu_percent(self, interval=None):
+                return 0.0
+
+            def create_time(self):
+                return self._create_time
+
+        stale_cached = _CachedProcess()
+        fresh_sensor = _FreshProcess(
+            {
+                "pid": 44,
+                "cmdline": [r"C:\Python\python.exe", r"D:\Excalibur\excalibur\main.py"],
+                "exe": r"C:\Python\python.exe",
+                "name": "python.exe",
+            },
+            3000.0,
+        )
+
+        with patch("excalibur.database.db._SENSOR_PROCESS_HANDLE", stale_cached):
+            with patch("excalibur.database.db._SENSOR_PROCESS_PID", 44):
+                with patch("excalibur.database.db._SENSOR_PROCESS_CREATE_TIME", 1000.0):
+                    with patch(
+                        "excalibur.database.db.psutil.process_iter",
+                        return_value=[fresh_sensor],
+                    ):
+                        selected = Database._sensor_process()
+
+        self.assertIs(selected, fresh_sensor)
 
     def test_system_health_history_computes_rates(self):
         history = self.database._get_system_health_history()

@@ -36,7 +36,12 @@ class PortScanDetectorTest(unittest.TestCase):
         self.assertIn("20 unique destination ports", alerts[0]["description"])
         self.assertEqual(alerts[0]["source_ip"], "10.0.0.10")
         self.assertEqual(alerts[0]["destination_ip"], "10.0.0.1")
-        self.assertEqual(json.loads(alerts[0]["context_json"])["unique_dst_ports"], 20)
+        context = json.loads(alerts[0]["context_json"])
+        self.assertEqual(context["rule"]["name"], "Port Scan")
+        self.assertEqual(context["rule"]["pack"], "builtin")
+        self.assertEqual(context["rule"]["thresholds"]["unique_dst_ports"], 20)
+        self.assertEqual(context["evidence"]["observed"]["unique_dst_ports"], 20)
+        self.assertEqual(context["evidence"]["window_seconds"], 60)
 
     def test_non_syn_packets_do_not_count(self):
         detector = PortScanDetector(

@@ -1,12 +1,13 @@
 from collections import deque
 from datetime import datetime, timezone
+from itertools import islice
 import json
 import os
 from queue import Empty, Full, Queue
 import sqlite3
 import time
 from pathlib import Path
-from threading import Event, RLock, Thread
+from threading import Event, RLock, Thread, current_thread
 
 import psutil
 
@@ -17,6 +18,9 @@ from excalibur.service_lookup import service_case_sql
 
 _SENSOR_PROCESS_HANDLE = None
 _SENSOR_PROCESS_PID = None
+_SENSOR_PROCESS_CREATE_TIME = None
+_SENSOR_PROCESS_SELECTION_SOURCE = None
+_WINDOWS_SENSOR_SERVICE_NAME = "ExcaliburSensor"
 
 
 class _SystemHealthHistory:
@@ -113,10 +117,38 @@ _SYSTEM_HEALTH_HISTORY = _SystemHealthHistory()
 class Database:
     TRAFFIC_RETENTION_CHECK_INTERVAL = 1000
     WRITE_BATCH_SIZE = 500
+    WRITE_BATCH_SIZE_LOW = 250
+    WRITE_BATCH_SIZE_HIGH = 1000
+    WRITE_BATCH_SIZE_CRITICAL = 1500
     WRITE_FLUSH_INTERVAL_SECONDS = 0.25
     METRICS_FLUSH_INTERVAL_SECONDS = 5
     HOST_UPDATE_DEBOUNCE_SECONDS = 5
     WRITER_QUEUE_MAXSIZE = 20000
+    PERF_LOG_INTERVAL_SECONDS = 5
+    RETENTION_IDLE_QUEUE_DEPTH = 1000
+    MAINTENANCE_POLL_INTERVAL_SECONDS = 0.5
+    OVERFLOW_STRATEGY_DROP_TRAFFIC = "drop_traffic"
+    OVERFLOW_STRATEGY_SYNC_WRITE = "sync_write"
+    HOST_FLUSH_BATCH_SIZE = 250
+    DOMAIN_FLUSH_BATCH_SIZE = 250
+    METRIC_FLUSH_BATCH_SIZE = 32
+    WRITE_PRESSURE_CONTINUE_DEPTH = 1000
+    DROP_WARNING_INTERVAL_SECONDS = 5
+    SQLITE_MAX_VARIABLES = 999
+    TRAFFIC_INSERT_COLUMNS = (
+        "timestamp",
+        "src_ip",
+        "dst_ip",
+        "protocol",
+        "src_port",
+        "dst_port",
+        "packet_size",
+        "packet_count",
+        "byte_count",
+        "first_seen",
+        "last_seen",
+    )
+    TRAFFIC_INSERT_CHUNK_SIZE = max(1, SQLITE_MAX_VARIABLES // len(TRAFFIC_INSERT_COLUMNS))
 
     def __init__(self, db_path="excalibur.sqlite", config=None, async_writes=False):
         self.db_path = Path(db_path)
@@ -131,11 +163,71 @@ class Database:
         self._writer_stop_event = Event()
         self._writer_flush_event = Event()
         self._writer_thread = None
+        self._maintenance_stop_event = Event()
+        self._maintenance_wake_event = Event()
+        self._maintenance_thread = None
         self._pending_metrics = {}
+        self._pending_host_inserts = {}
         self._pending_host_updates = {}
         self._host_update_deadlines = {}
-        self._known_domains = {}
+        self._known_hosts = set()
+        self._known_domains = set()
         self._pending_domain_updates = {}
+        self._retention_due = False
+        self._overflow_strategy = str(
+            os.environ.get(
+                "EXCALIBUR_QUEUE_OVERFLOW_STRATEGY",
+                self.OVERFLOW_STRATEGY_DROP_TRAFFIC,
+            )
+        ).strip().lower()
+        self._packet_db_lock_wait_total_ms = 0.0
+        self._writer_db_lock_wait_total_ms = 0.0
+        self._writer_db_lock_hold_total_ms = 0.0
+        self._writer_queue_drain_total_ms = 0.0
+        self._writer_traffic_exec_total_ms = 0.0
+        self._writer_dns_exec_total_ms = 0.0
+        self._writer_host_exec_total_ms = 0.0
+        self._writer_domain_exec_total_ms = 0.0
+        self._writer_metrics_exec_total_ms = 0.0
+        self._writer_commit_total_ms = 0.0
+        self._retention_total_ms = 0.0
+        self._writer_domain_log_total_ms = 0.0
+        self._writer_flush_batches = 0
+        self._writer_flushed_traffic_rows = 0
+        self._writer_flushed_traffic_packets = 0
+        self._writer_flushed_traffic_bytes = 0
+        self._writer_flushed_dns_rows = 0
+        self._writer_flushed_host_inserts = 0
+        self._writer_flushed_host_updates = 0
+        self._writer_flushed_domain_updates = 0
+        self._writer_flushed_metric_updates = 0
+        self._writer_queue_high_watermark = 0
+        self._writer_queue_lifetime_high_watermark = 0
+        self._writer_fallback_sync_total = 0
+        self._writer_fallback_sync_lifetime_total = 0
+        self._writer_overflow_drop_total = 0
+        self._writer_overflow_drop_lifetime_total = 0
+        self._writer_overflow_drop_since_warning = 0
+        self._last_drop_warning_at = 0.0
+        self._retention_runs_total = 0
+        self._retention_purged_rows_total = 0
+        self._writer_lock_hold_lifetime_total_ms = 0.0
+        self._writer_lock_hold_lifetime_max_ms = 0.0
+        self._writer_transaction_lifetime_count = 0
+        self._writer_queue_depth_before_flush_max = 0
+        self._writer_queue_depth_after_flush_max = 0
+        self._writer_domain_log_lifetime_total_ms = 0.0
+        self._writer_flushed_traffic_lifetime_total = 0
+        self._writer_inserted_traffic_row_lifetime_total = 0
+        self._writer_flushed_traffic_bytes_lifetime_total = 0
+        self._writer_flushed_dns_lifetime_total = 0
+        self._writer_flushed_domain_lifetime_total = 0
+        self._writer_traffic_exec_lifetime_total_ms = 0.0
+        self._writer_traffic_exec_lifetime_max_ms = 0.0
+        self._writer_traffic_exec_lifetime_count = 0
+        self._retention_lifetime_total_ms = 0.0
+        self._retention_lifetime_max_ms = 0.0
+        self._last_perf_log_at = time.monotonic()
         self.connection = sqlite3.connect(
             self.db_path,
             timeout=5.0,
@@ -146,6 +238,8 @@ class Database:
         self.event_bus = None
         self._configure_connection()
         self._create_tables()
+        if self.async_writes:
+            self._prime_async_caches()
 
     def set_notification_manager(self, notification_manager):
         self.notification_manager = notification_manager
@@ -189,15 +283,37 @@ class Database:
                 self.connection.execute(
                     """
                     CREATE TABLE IF NOT EXISTS traffic (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id INTEGER PRIMARY KEY,
                         timestamp TEXT NOT NULL,
                         src_ip TEXT NOT NULL,
                         dst_ip TEXT NOT NULL,
                         protocol TEXT NOT NULL,
                         src_port INTEGER,
                         dst_port INTEGER,
-                        packet_size INTEGER NOT NULL
+                        packet_size INTEGER NOT NULL,
+                        packet_count INTEGER NOT NULL DEFAULT 1,
+                        byte_count INTEGER NOT NULL DEFAULT 0,
+                        first_seen TEXT,
+                        last_seen TEXT
                     )
+                    """
+                )
+                self._ensure_column("traffic", "packet_count", "INTEGER NOT NULL DEFAULT 1")
+                self._ensure_column("traffic", "byte_count", "INTEGER NOT NULL DEFAULT 0")
+                self._ensure_column("traffic", "first_seen", "TEXT")
+                self._ensure_column("traffic", "last_seen", "TEXT")
+                self.connection.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_traffic_aggregated_flow
+                    ON traffic (
+                        timestamp,
+                        src_ip,
+                        dst_ip,
+                        protocol,
+                        src_port,
+                        dst_port
+                    )
+                    WHERE first_seen IS NOT NULL
                     """
                 )
                 self.connection.execute(
@@ -319,6 +435,120 @@ class Database:
             return None
         return json.dumps(context, sort_keys=True)
 
+    @staticmethod
+    def _traffic_packet_count_sql(column_name="packet_count"):
+        return f"COALESCE({column_name}, 1)"
+
+    @staticmethod
+    def _traffic_byte_count_sql(packet_size_column="packet_size", byte_count_column="byte_count"):
+        return (
+            "CASE "
+            f"WHEN {byte_count_column} IS NULL OR {byte_count_column} <= 0 "
+            f"THEN COALESCE({packet_size_column}, 0) "
+            f"ELSE {byte_count_column} "
+            "END"
+        )
+
+    @staticmethod
+    def _traffic_first_seen_sql():
+        return "COALESCE(first_seen, timestamp)"
+
+    @staticmethod
+    def _traffic_last_seen_sql():
+        return "COALESCE(last_seen, timestamp)"
+
+    @staticmethod
+    def _normalize_traffic_port(port):
+        if port in ("", None):
+            return -1
+        return int(port)
+
+    @staticmethod
+    def _bucket_traffic_timestamp(timestamp):
+        timestamp = str(timestamp)
+        try:
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            return timestamp.split(".", 1)[0]
+        return parsed.replace(microsecond=0).isoformat()
+
+    def _aggregate_traffic_rows(self, traffic_rows):
+        aggregated = {}
+        for row in traffic_rows:
+            (
+                timestamp,
+                src_ip,
+                dst_ip,
+                protocol,
+                src_port,
+                dst_port,
+                packet_size,
+            ) = row
+            normalized_src_port = self._normalize_traffic_port(src_port)
+            normalized_dst_port = self._normalize_traffic_port(dst_port)
+            packet_size = int(packet_size or 0)
+            bucket_timestamp = self._bucket_traffic_timestamp(timestamp)
+            key = (
+                bucket_timestamp,
+                src_ip,
+                dst_ip,
+                protocol,
+                normalized_src_port,
+                normalized_dst_port,
+            )
+            if key not in aggregated:
+                aggregated[key] = {
+                    "timestamp": bucket_timestamp,
+                    "src_ip": src_ip,
+                    "dst_ip": dst_ip,
+                    "protocol": protocol,
+                    "src_port": normalized_src_port,
+                    "dst_port": normalized_dst_port,
+                    "packet_size": packet_size,
+                    "packet_count": 1,
+                    "byte_count": packet_size,
+                    "first_seen": timestamp,
+                    "last_seen": timestamp,
+                }
+                continue
+            entry = aggregated[key]
+            entry["packet_count"] += 1
+            entry["byte_count"] += packet_size
+            if timestamp < entry["first_seen"]:
+                entry["first_seen"] = timestamp
+            if timestamp > entry["last_seen"]:
+                entry["last_seen"] = timestamp
+
+        return [
+            (
+                entry["timestamp"],
+                entry["src_ip"],
+                entry["dst_ip"],
+                entry["protocol"],
+                entry["src_port"],
+                entry["dst_port"],
+                entry["packet_size"],
+                entry["packet_count"],
+                entry["byte_count"],
+                entry["first_seen"],
+                entry["last_seen"],
+            )
+            for entry in aggregated.values()
+        ]
+
+    def _prime_async_caches(self):
+        with self._lock:
+            self._known_hosts = {
+                row[0]
+                for row in self.connection.execute("SELECT ip_address FROM hosts").fetchall()
+                if row[0]
+            }
+            self._known_domains = {
+                row[0]
+                for row in self.connection.execute("SELECT domain FROM domains").fetchall()
+                if row[0]
+            }
+
     def _ensure_writer_thread(self):
         with self._state_lock:
             if self._writer_thread is not None and self._writer_thread.is_alive():
@@ -331,38 +561,129 @@ class Database:
                 daemon=True,
             )
             self._writer_thread.start()
+            print(
+                "[Ownership] writer_thread_started "
+                f"pid={os.getpid()} "
+                f"thread_name={self._writer_thread.name} "
+                f"thread_ident={self._writer_thread.ident}",
+                flush=True,
+            )
+            self._ensure_maintenance_thread()
+
+    def _ensure_maintenance_thread(self):
+        if not self.async_writes:
+            return
+        if self._maintenance_thread is not None and self._maintenance_thread.is_alive():
+            return
+        self._maintenance_stop_event.clear()
+        self._maintenance_wake_event.clear()
+        self._maintenance_thread = Thread(
+            target=self._maintenance_loop,
+            name="ExcaliburSQLiteMaintenance",
+            daemon=True,
+        )
+        self._maintenance_thread.start()
+        print(
+            "[Ownership] maintenance_thread_started "
+            f"pid={os.getpid()} "
+            f"thread_name={self._maintenance_thread.name} "
+            f"thread_ident={self._maintenance_thread.ident}",
+            flush=True,
+        )
+
+    def _maintenance_loop(self):
+        print(
+            "[Ownership] maintenance_thread_running "
+            f"pid={os.getpid()} "
+            f"thread_name={current_thread().name} "
+            f"thread_ident={current_thread().ident}",
+            flush=True,
+        )
+        while not self._maintenance_stop_event.wait(
+            timeout=self.MAINTENANCE_POLL_INTERVAL_SECONDS
+        ):
+            self._maintenance_wake_event.wait(timeout=0)
+            self._maintenance_wake_event.clear()
+            self._run_deferred_retention_if_idle()
+        self._run_deferred_retention_if_idle(force=True)
 
     def _writer_loop(self):
+        print(
+            "[Ownership] writer_thread_running "
+            f"pid={os.getpid()} "
+            f"thread_name={current_thread().name} "
+            f"thread_ident={current_thread().ident}",
+            flush=True,
+        )
         # The writer thread batches hot-path packet/DNS writes so packet capture
         # work does not churn SQLite transactions on every event.
         traffic_rows = []
         dns_rows = []
+        pending_task_dones = 0
         last_flush = time.monotonic()
         last_metrics_flush = last_flush
         last_domain_flush = last_flush
         last_host_flush = last_flush
 
         while True:
-            timeout = max(
-                0.01,
-                self.WRITE_FLUSH_INTERVAL_SECONDS - (time.monotonic() - last_flush),
-            )
-            try:
-                item = self._write_queue.get(timeout=timeout)
-                kind = item["kind"]
-                if kind == "traffic":
-                    traffic_rows.append(item["row"])
-                elif kind == "dns":
-                    dns_rows.append(item["row"])
-            except Empty:
-                item = None
-
+            queue_depth = self._write_queue.qsize()
+            batch_target = self._current_batch_size(queue_depth)
             now = time.monotonic()
             force_flush = self._writer_flush_event.is_set()
+            should_block_for_item = (
+                not force_flush
+                and not traffic_rows
+                and not dns_rows
+            )
+            drained_queue_items = 0
+            queue_drain_started_at = None
+
+            if should_block_for_item:
+                timeout = max(
+                    0.01,
+                    self.WRITE_FLUSH_INTERVAL_SECONDS - (time.monotonic() - last_flush),
+                )
+                try:
+                    item = self._write_queue.get(timeout=timeout)
+                    queue_drain_started_at = time.perf_counter()
+                    drained_queue_items += 1
+                    pending_task_dones += 1
+                    kind = item["kind"]
+                    if kind == "traffic":
+                        traffic_rows.append(item["row"])
+                    elif kind == "dns":
+                        dns_rows.append(item["row"])
+                except Empty:
+                    item = None
+            else:
+                item = None
+                if queue_depth:
+                    queue_drain_started_at = time.perf_counter()
+
+            if item is not None or force_flush or queue_depth:
+                while len(traffic_rows) + len(dns_rows) < batch_target:
+                    try:
+                        drained_item = self._write_queue.get_nowait()
+                    except Empty:
+                        break
+                    drained_queue_items += 1
+                    pending_task_dones += 1
+                    drained_kind = drained_item["kind"]
+                    if drained_kind == "traffic":
+                        traffic_rows.append(drained_item["row"])
+                    elif drained_kind == "dns":
+                        dns_rows.append(drained_item["row"])
+                if queue_drain_started_at is not None:
+                    with self._state_lock:
+                        self._writer_queue_drain_total_ms += (
+                            (time.perf_counter() - queue_drain_started_at) * 1000
+                        )
+
+            queue_depth_before_flush = self._write_queue.qsize() + drained_queue_items
             should_flush_batches = (
                 force_flush
-                or len(traffic_rows) >= self.WRITE_BATCH_SIZE
-                or len(dns_rows) >= self.WRITE_BATCH_SIZE
+                or len(traffic_rows) >= batch_target
+                or len(dns_rows) >= batch_target
                 or (
                     (traffic_rows or dns_rows)
                     and now - last_flush >= self.WRITE_FLUSH_INTERVAL_SECONDS
@@ -379,14 +700,16 @@ class Database:
             )
 
             if should_flush_batches or should_flush_domains or should_flush_hosts or should_flush_metrics:
-                flushed_traffic = len(traffic_rows)
-                flushed_dns = len(dns_rows)
-                self._flush_pending_writes(
+                flush_stats = self._flush_pending_writes(
                     traffic_rows=traffic_rows,
                     dns_rows=dns_rows,
                     flush_domains=should_flush_domains,
                     flush_hosts=should_flush_hosts,
                     flush_metrics=should_flush_metrics,
+                    host_limit=self.HOST_FLUSH_BATCH_SIZE,
+                    domain_limit=self.DOMAIN_FLUSH_BATCH_SIZE,
+                    metrics_limit=self.METRIC_FLUSH_BATCH_SIZE,
+                    queue_depth_before_flush=queue_depth_before_flush,
                 )
                 traffic_rows = []
                 dns_rows = []
@@ -397,9 +720,23 @@ class Database:
                     last_host_flush = now
                 if should_flush_metrics:
                     last_metrics_flush = now
-                self._writer_flush_event.clear()
-                for _ in range(flushed_traffic + flushed_dns):
+                queue_depth_after_flush = self._write_queue.qsize()
+                continue_pressure_drain = (
+                    queue_depth_after_flush >= self.WRITE_PRESSURE_CONTINUE_DEPTH
+                    or (
+                        flush_stats["remaining_side_work"]
+                        and queue_depth_after_flush > 0
+                    )
+                )
+                if continue_pressure_drain:
+                    self._writer_flush_event.set()
+                else:
+                    self._writer_flush_event.clear()
+                for _ in range(pending_task_dones):
                     self._write_queue.task_done()
+                pending_task_dones = 0
+                self._record_writer_perf(flush_stats, queue_depth_after_flush)
+                self._run_deferred_retention_if_idle()
 
             if (
                 self._writer_stop_event.is_set()
@@ -414,14 +751,59 @@ class Database:
                     flush_hosts=True,
                     flush_metrics=True,
                 )
+                self._run_deferred_retention_if_idle(force=True)
                 break
 
     def _enqueue_write(self, kind, row):
         self._ensure_writer_thread()
         try:
             self._write_queue.put_nowait({"kind": kind, "row": row})
+            with self._state_lock:
+                self._writer_queue_high_watermark = max(
+                    self._writer_queue_high_watermark,
+                    self._write_queue.qsize(),
+                )
+                self._writer_queue_lifetime_high_watermark = max(
+                    self._writer_queue_lifetime_high_watermark,
+                    self._write_queue.qsize(),
+                )
             return True
         except Full:
+            warning_message = None
+            should_drop = False
+            with self._state_lock:
+                if (
+                    self.async_writes
+                    and kind == "traffic"
+                    and self._overflow_strategy == self.OVERFLOW_STRATEGY_DROP_TRAFFIC
+                ):
+                    self._writer_overflow_drop_total += 1
+                    self._writer_overflow_drop_lifetime_total += 1
+                    self._writer_overflow_drop_since_warning += 1
+                    now = time.monotonic()
+                    if (
+                        self._last_drop_warning_at == 0.0
+                        or now - self._last_drop_warning_at
+                        >= self.DROP_WARNING_INTERVAL_SECONDS
+                    ):
+                        warning_message = (
+                            "[WARN] SQLite writer queue full; dropped "
+                            f"{self._writer_overflow_drop_since_warning} traffic rows "
+                            "since previous warning "
+                            f"(total_dropped={self._writer_overflow_drop_lifetime_total})"
+                        )
+                        self._writer_overflow_drop_since_warning = 0
+                        self._last_drop_warning_at = now
+                    should_drop = True
+                if not should_drop:
+                    self._writer_fallback_sync_total += 1
+                    self._writer_fallback_sync_lifetime_total += 1
+            if should_drop:
+                if warning_message is not None:
+                    print(warning_message, flush=True)
+                return True
+            if warning_message is not None:
+                print(warning_message, flush=True)
             print(
                 f"[WARN] SQLite writer queue full; falling back to synchronous {kind} write",
                 flush=True,
@@ -436,55 +818,98 @@ class Database:
         flush_domains=True,
         flush_hosts=True,
         flush_metrics=True,
+        host_limit=None,
+        domain_limit=None,
+        metrics_limit=None,
+        queue_depth_before_flush=0,
     ):
         traffic_rows = list(traffic_rows or [])
         dns_rows = list(dns_rows or [])
+        aggregated_traffic_rows = self._aggregate_traffic_rows(traffic_rows) if traffic_rows else []
+        traffic_packet_events = len(traffic_rows)
+        traffic_insert_rows = len(aggregated_traffic_rows)
+        traffic_byte_count = sum(row[8] for row in aggregated_traffic_rows)
 
         with self._state_lock:
-            host_updates = {}
-            if flush_hosts and self._pending_host_updates:
-                host_updates = self._pending_host_updates
-                self._pending_host_updates = {}
-                self._host_update_deadlines = {}
+            host_inserts = (
+                self._pop_pending_items_locked(self._pending_host_inserts, host_limit)
+                if flush_hosts
+                else {}
+            )
 
-            domain_updates = {}
-            if flush_domains and self._pending_domain_updates:
-                domain_updates = self._pending_domain_updates
-                self._pending_domain_updates = {}
+            host_updates = (
+                self._pop_pending_items_locked(self._pending_host_updates, host_limit)
+                if flush_hosts
+                else {}
+            )
+            for ip_address in host_updates:
+                self._host_update_deadlines.pop(ip_address, None)
 
-            metrics = {}
-            if flush_metrics and self._pending_metrics:
-                metrics = self._pending_metrics
-                self._pending_metrics = {}
+            domain_updates = (
+                self._pop_pending_items_locked(self._pending_domain_updates, domain_limit)
+                if flush_domains
+                else {}
+            )
 
-        if not (traffic_rows or dns_rows or host_updates or domain_updates or metrics):
-            return
+            metrics = (
+                self._pop_pending_items_locked(self._pending_metrics, metrics_limit)
+                if flush_metrics
+                else {}
+            )
+            remaining_side_work = bool(
+                self._pending_host_inserts
+                or self._pending_host_updates
+                or self._pending_domain_updates
+                or self._pending_metrics
+            )
+
+        if not (
+            traffic_rows
+            or dns_rows
+            or host_inserts
+            or host_updates
+            or domain_updates
+            or metrics
+        ):
+            return {
+                "traffic_rows": 0,
+                "traffic_packet_events": traffic_packet_events,
+                "traffic_insert_rows": traffic_insert_rows,
+                "traffic_byte_count": traffic_byte_count,
+                "dns_rows": 0,
+                "host_inserts": 0,
+                "host_updates": 0,
+                "domain_updates": 0,
+                "metric_updates": 0,
+                "queue_depth_before_flush": queue_depth_before_flush,
+                "queue_depth_after_flush": self._write_queue.qsize(),
+                "remaining_side_work": remaining_side_work,
+                "domain_log_ms": 0.0,
+                "traffic_exec_ms": 0.0,
+            }
 
         retention_check = False
+        domains_to_log = []
+        lock_wait_started_at = time.perf_counter()
         with self._lock:
-            with self.connection:
-                if traffic_rows:
-                    self.connection.executemany(
-                        """
-                        INSERT INTO traffic (
-                            timestamp,
-                            src_ip,
-                            dst_ip,
-                            protocol,
-                            src_port,
-                            dst_port,
-                            packet_size
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        traffic_rows,
-                    )
-                    self._traffic_insert_counter += len(traffic_rows)
+            lock_wait_ms = (time.perf_counter() - lock_wait_started_at) * 1000
+            lock_hold_started_at = time.perf_counter()
+            self.connection.execute("BEGIN")
+            try:
+                if aggregated_traffic_rows:
+                    traffic_exec_started_at = time.perf_counter()
+                    self._insert_traffic_rows_locked(aggregated_traffic_rows)
+                    traffic_exec_ms = (time.perf_counter() - traffic_exec_started_at) * 1000
+                else:
+                    traffic_exec_ms = 0.0
+                if aggregated_traffic_rows:
+                    self._traffic_insert_counter += len(aggregated_traffic_rows)
                     if self._traffic_insert_counter >= self.TRAFFIC_RETENTION_CHECK_INTERVAL:
                         self._traffic_insert_counter %= self.TRAFFIC_RETENTION_CHECK_INTERVAL
                         retention_check = True
 
                 if dns_rows:
+                    dns_exec_started_at = time.perf_counter()
                     self.connection.executemany(
                         """
                         INSERT INTO dns_queries (
@@ -499,8 +924,37 @@ class Database:
                         """,
                         dns_rows,
                     )
+                    dns_exec_ms = (time.perf_counter() - dns_exec_started_at) * 1000
+                else:
+                    dns_exec_ms = 0.0
 
+                if host_inserts:
+                    host_exec_started_at = time.perf_counter()
+                    self.connection.executemany(
+                        """
+                        INSERT OR IGNORE INTO hosts (
+                            ip_address,
+                            mac_address,
+                            first_seen,
+                            last_seen
+                        )
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                ip_address,
+                                values["mac_address"],
+                                values["first_seen"],
+                                values["last_seen"],
+                            )
+                            for ip_address, values in host_inserts.items()
+                        ],
+                    )
+                else:
+                    host_exec_started_at = None
                 if host_updates:
+                    if host_exec_started_at is None:
+                        host_exec_started_at = time.perf_counter()
                     self.connection.executemany(
                         """
                         UPDATE hosts
@@ -509,19 +963,180 @@ class Database:
                         """,
                         [(timestamp, ip_address) for ip_address, timestamp in host_updates.items()],
                     )
+                host_exec_ms = (
+                    (time.perf_counter() - host_exec_started_at) * 1000
+                    if host_exec_started_at is not None
+                    else 0.0
+                )
 
                 if domain_updates:
-                    self._flush_domain_updates_locked(domain_updates)
+                    domain_exec_started_at = time.perf_counter()
+                    domains_to_log = self._flush_domain_updates_locked(domain_updates)
+                    domain_exec_ms = (time.perf_counter() - domain_exec_started_at) * 1000
+                else:
+                    domain_exec_ms = 0.0
 
                 if metrics:
+                    metrics_exec_started_at = time.perf_counter()
                     self._flush_metrics_locked(metrics)
+                    metrics_exec_ms = (time.perf_counter() - metrics_exec_started_at) * 1000
+                else:
+                    metrics_exec_ms = 0.0
+
+                commit_started_at = time.perf_counter()
+                self.connection.commit()
+                commit_ms = (time.perf_counter() - commit_started_at) * 1000
+            except Exception:
+                self.connection.rollback()
+                raise
+            lock_hold_ms = (time.perf_counter() - lock_hold_started_at) * 1000
+
+        with self._state_lock:
+            self._writer_db_lock_wait_total_ms += lock_wait_ms
+            self._writer_db_lock_hold_total_ms += lock_hold_ms
+            self._writer_traffic_exec_total_ms += traffic_exec_ms
+            self._writer_dns_exec_total_ms += dns_exec_ms
+            self._writer_host_exec_total_ms += host_exec_ms
+            self._writer_domain_exec_total_ms += domain_exec_ms
+            self._writer_metrics_exec_total_ms += metrics_exec_ms
+            self._writer_commit_total_ms += commit_ms
+            self._writer_lock_hold_lifetime_total_ms += lock_hold_ms
+            self._writer_lock_hold_lifetime_max_ms = max(
+                self._writer_lock_hold_lifetime_max_ms,
+                lock_hold_ms,
+            )
+            self._writer_transaction_lifetime_count += 1
+            self._writer_queue_depth_before_flush_max = max(
+                self._writer_queue_depth_before_flush_max,
+                queue_depth_before_flush,
+            )
+            self._writer_queue_depth_after_flush_max = max(
+                self._writer_queue_depth_after_flush_max,
+                self._write_queue.qsize(),
+            )
+
+        domain_log_ms = 0.0
+        if domains_to_log:
+            domain_log_started_at = time.perf_counter()
+            self._append_new_domains(domains_to_log)
+            domain_log_ms = (time.perf_counter() - domain_log_started_at) * 1000
+            with self._state_lock:
+                self._writer_domain_log_total_ms += domain_log_ms
+                self._writer_domain_log_lifetime_total_ms += domain_log_ms
 
         if retention_check:
-            self.enforce_traffic_limit(Config.TRAFFIC_MAX_RECORDS)
+            with self._state_lock:
+                self._retention_due = True
+            self._maintenance_wake_event.set()
+        return {
+            "traffic_rows": len(aggregated_traffic_rows),
+            "traffic_packet_events": traffic_packet_events,
+            "traffic_insert_rows": traffic_insert_rows,
+            "traffic_byte_count": traffic_byte_count,
+            "dns_rows": len(dns_rows),
+            "host_inserts": len(host_inserts),
+            "host_updates": len(host_updates),
+            "domain_updates": len(domain_updates),
+            "metric_updates": len(metrics),
+            "queue_depth_before_flush": queue_depth_before_flush,
+            "queue_depth_after_flush": self._write_queue.qsize(),
+            "remaining_side_work": remaining_side_work,
+            "domain_log_ms": round(domain_log_ms, 3),
+            "traffic_exec_ms": round(traffic_exec_ms, 3),
+        }
+
+    def _insert_traffic_rows_locked(self, traffic_rows):
+        if not traffic_rows:
+            return 0
+        columns = ", ".join(self.TRAFFIC_INSERT_COLUMNS)
+        row_placeholders = "(" + ", ".join(["?"] * len(self.TRAFFIC_INSERT_COLUMNS)) + ")"
+        inserted = 0
+        for offset in range(0, len(traffic_rows), self.TRAFFIC_INSERT_CHUNK_SIZE):
+            chunk = traffic_rows[offset : offset + self.TRAFFIC_INSERT_CHUNK_SIZE]
+            placeholders = ", ".join([row_placeholders] * len(chunk))
+            params = [value for row in chunk for value in row]
+            self.connection.execute(
+                f"""
+                INSERT INTO traffic ({columns})
+                VALUES {placeholders}
+                ON CONFLICT(timestamp, src_ip, dst_ip, protocol, src_port, dst_port)
+                WHERE first_seen IS NOT NULL
+                DO UPDATE SET
+                    packet_count = traffic.packet_count + excluded.packet_count,
+                    byte_count = traffic.byte_count + excluded.byte_count,
+                    packet_size = excluded.packet_size,
+                    first_seen = MIN(traffic.first_seen, excluded.first_seen),
+                    last_seen = MAX(traffic.last_seen, excluded.last_seen)
+                """,
+                params,
+            )
+            inserted += len(chunk)
+        return inserted
+
+    def _current_batch_size(self, queue_depth):
+        if queue_depth >= int(self.WRITER_QUEUE_MAXSIZE * 0.75):
+            return self.WRITE_BATCH_SIZE_CRITICAL
+        if queue_depth >= int(self.WRITER_QUEUE_MAXSIZE * 0.25):
+            return self.WRITE_BATCH_SIZE_HIGH
+        if queue_depth <= max(10, self.WRITE_BATCH_SIZE_LOW):
+            return self.WRITE_BATCH_SIZE_LOW
+        return self.WRITE_BATCH_SIZE
+
+    def _run_deferred_retention_if_idle(self, force=False):
+        with self._state_lock:
+            retention_due = self._retention_due
+        if not retention_due:
+            return 0
+
+        queue_depth = self._write_queue.qsize()
+        if not force and queue_depth > self.RETENTION_IDLE_QUEUE_DEPTH:
+            return 0
+
+        retention_started_at = time.perf_counter()
+        purged = self.enforce_traffic_limit(Config.TRAFFIC_MAX_RECORDS)
+        retention_ms = (time.perf_counter() - retention_started_at) * 1000
+        with self._state_lock:
+            self._retention_due = False
+            self._retention_total_ms += retention_ms
+            self._retention_lifetime_total_ms += retention_ms
+            self._retention_lifetime_max_ms = max(
+                self._retention_lifetime_max_ms,
+                retention_ms,
+            )
+            self._retention_runs_total += 1
+            self._retention_purged_rows_total += purged
+        return purged
 
     def _flush_domain_updates_locked(self, domain_updates):
+        domain_rows = []
+        risk_rows = []
+        domains_to_log = []
         for domain, state in domain_updates.items():
-            self.connection.execute(
+            domain_rows.append(
+                (
+                    domain,
+                    state["first_seen"],
+                    state["last_seen"],
+                    state["query_count"],
+                )
+            )
+            risk_result = state["risk_result"]
+            risk_rows.append(
+                (
+                    risk_result["domain"],
+                    risk_result["risk_score"],
+                    risk_result["risk_level"],
+                    "; ".join(risk_result["reasons"]),
+                    state["first_seen"],
+                    state["last_seen"],
+                    state["query_count"],
+                )
+            )
+            if state["is_new"]:
+                domains_to_log.append(domain)
+
+        if domain_rows:
+            self.connection.executemany(
                 """
                 INSERT INTO domains (domain, first_seen, last_seen, query_count)
                 VALUES (?, ?, ?, ?)
@@ -529,15 +1144,10 @@ class Database:
                     last_seen = excluded.last_seen,
                     query_count = domains.query_count + excluded.query_count
                 """,
-                (
-                    domain,
-                    state["first_seen"],
-                    state["last_seen"],
-                    state["query_count"],
-                ),
+                domain_rows,
             )
-            risk_result = state["risk_result"]
-            self.connection.execute(
+        if risk_rows:
+            self.connection.executemany(
                 """
                 INSERT INTO domain_risk (
                     domain,
@@ -556,18 +1166,9 @@ class Database:
                     last_seen = excluded.last_seen,
                     query_count = domain_risk.query_count + excluded.query_count
                 """,
-                (
-                    risk_result["domain"],
-                    risk_result["risk_score"],
-                    risk_result["risk_level"],
-                    "; ".join(risk_result["reasons"]),
-                    state["first_seen"],
-                    state["last_seen"],
-                    state["query_count"],
-                ),
+                risk_rows,
             )
-            if state["is_new"]:
-                self._append_new_domain(domain)
+        return domains_to_log
 
     def _flush_metrics_locked(self, metrics):
         if not metrics:
@@ -588,6 +1189,147 @@ class Database:
             [(name, float(value)) for name, value in metrics.items()],
         )
 
+    def _record_writer_perf(self, flush_stats, queue_depth):
+        with self._state_lock:
+            self._writer_flush_batches += 1
+            self._writer_flushed_traffic_rows += flush_stats["traffic_insert_rows"]
+            self._writer_flushed_traffic_packets += flush_stats["traffic_packet_events"]
+            self._writer_flushed_traffic_bytes += flush_stats["traffic_byte_count"]
+            self._writer_flushed_dns_rows += flush_stats["dns_rows"]
+            self._writer_flushed_host_inserts += flush_stats["host_inserts"]
+            self._writer_flushed_host_updates += flush_stats["host_updates"]
+            self._writer_flushed_domain_updates += flush_stats["domain_updates"]
+            self._writer_flushed_metric_updates += flush_stats["metric_updates"]
+            self._writer_flushed_traffic_lifetime_total += flush_stats["traffic_packet_events"]
+            self._writer_inserted_traffic_row_lifetime_total += flush_stats["traffic_insert_rows"]
+            self._writer_flushed_traffic_bytes_lifetime_total += flush_stats["traffic_byte_count"]
+            self._writer_flushed_dns_lifetime_total += flush_stats["dns_rows"]
+            self._writer_flushed_domain_lifetime_total += flush_stats["domain_updates"]
+            self._writer_traffic_exec_lifetime_total_ms += flush_stats["traffic_exec_ms"]
+            self._writer_traffic_exec_lifetime_max_ms = max(
+                self._writer_traffic_exec_lifetime_max_ms,
+                flush_stats["traffic_exec_ms"],
+            )
+            if flush_stats["traffic_insert_rows"] or flush_stats["traffic_packet_events"]:
+                self._writer_traffic_exec_lifetime_count += 1
+            self._writer_queue_high_watermark = max(
+                self._writer_queue_high_watermark,
+                queue_depth,
+            )
+            self._writer_queue_lifetime_high_watermark = max(
+                self._writer_queue_lifetime_high_watermark,
+                queue_depth,
+            )
+            now = time.monotonic()
+            if now - self._last_perf_log_at < self.PERF_LOG_INTERVAL_SECONDS:
+                return
+            snapshot = {
+                "packet_db_lock_wait_ms": round(self._packet_db_lock_wait_total_ms, 3),
+                "writer_db_lock_wait_ms": round(self._writer_db_lock_wait_total_ms, 3),
+                "writer_db_lock_hold_ms": round(self._writer_db_lock_hold_total_ms, 3),
+                "queue_drain_ms": round(self._writer_queue_drain_total_ms, 3),
+                "traffic_exec_ms": round(self._writer_traffic_exec_total_ms, 3),
+                "dns_exec_ms": round(self._writer_dns_exec_total_ms, 3),
+                "host_exec_ms": round(self._writer_host_exec_total_ms, 3),
+                "domain_exec_ms": round(self._writer_domain_exec_total_ms, 3),
+                "metrics_exec_ms": round(self._writer_metrics_exec_total_ms, 3),
+                "commit_ms": round(self._writer_commit_total_ms, 3),
+                "domain_log_ms": round(self._writer_domain_log_total_ms, 3),
+                "retention_ms": round(self._retention_total_ms, 3),
+                "queue_depth": queue_depth,
+                "queue_high_watermark": self._writer_queue_lifetime_high_watermark,
+                "queue_depth_before_flush_max": self._writer_queue_depth_before_flush_max,
+                "queue_depth_after_flush_max": self._writer_queue_depth_after_flush_max,
+                "flush_batches": self._writer_flush_batches,
+                "traffic_packets": self._writer_flushed_traffic_packets,
+                "traffic_rows": self._writer_flushed_traffic_rows,
+                "traffic_bytes": self._writer_flushed_traffic_bytes,
+                "dns_rows": self._writer_flushed_dns_rows,
+                "host_inserts": self._writer_flushed_host_inserts,
+                "host_updates": self._writer_flushed_host_updates,
+                "domain_updates": self._writer_flushed_domain_updates,
+                "metric_updates": self._writer_flushed_metric_updates,
+                "fallback_sync_writes": self._writer_fallback_sync_total,
+                "dropped_traffic_rows": self._writer_overflow_drop_total,
+                "retention_runs": self._retention_runs_total,
+                "retention_purged_rows": self._retention_purged_rows_total,
+            }
+            self._writer_db_lock_wait_total_ms = 0.0
+            self._writer_db_lock_hold_total_ms = 0.0
+            self._writer_queue_drain_total_ms = 0.0
+            self._writer_traffic_exec_total_ms = 0.0
+            self._writer_dns_exec_total_ms = 0.0
+            self._writer_host_exec_total_ms = 0.0
+            self._writer_domain_exec_total_ms = 0.0
+            self._writer_metrics_exec_total_ms = 0.0
+            self._writer_commit_total_ms = 0.0
+            self._writer_domain_log_total_ms = 0.0
+            self._retention_total_ms = 0.0
+            self._writer_flush_batches = 0
+            self._writer_flushed_traffic_rows = 0
+            self._writer_flushed_traffic_packets = 0
+            self._writer_flushed_traffic_bytes = 0
+            self._writer_flushed_dns_rows = 0
+            self._writer_flushed_host_inserts = 0
+            self._writer_flushed_host_updates = 0
+            self._writer_flushed_domain_updates = 0
+            self._writer_flushed_metric_updates = 0
+            self._writer_queue_high_watermark = queue_depth
+            self._writer_queue_depth_before_flush_max = 0
+            self._writer_queue_depth_after_flush_max = 0
+            self._writer_fallback_sync_total = 0
+            self._writer_overflow_drop_total = 0
+            self._retention_runs_total = 0
+            self._retention_purged_rows_total = 0
+            self._last_perf_log_at = now
+        print(
+            "[DBPERF] "
+            f"packet_db_lock_wait_ms={snapshot['packet_db_lock_wait_ms']} "
+            f"writer_db_lock_wait_ms={snapshot['writer_db_lock_wait_ms']} "
+            f"writer_db_lock_hold_ms={snapshot['writer_db_lock_hold_ms']} "
+            f"queue_drain_ms={snapshot['queue_drain_ms']} "
+            f"traffic_exec_ms={snapshot['traffic_exec_ms']} "
+            f"dns_exec_ms={snapshot['dns_exec_ms']} "
+            f"host_exec_ms={snapshot['host_exec_ms']} "
+            f"domain_exec_ms={snapshot['domain_exec_ms']} "
+            f"metrics_exec_ms={snapshot['metrics_exec_ms']} "
+            f"commit_ms={snapshot['commit_ms']} "
+            f"domain_log_ms={snapshot['domain_log_ms']} "
+            f"retention_ms={snapshot['retention_ms']} "
+            f"queue_depth={snapshot['queue_depth']} "
+            f"queue_high_watermark={snapshot['queue_high_watermark']} "
+            "queue_depth_before_flush_max="
+            f"{snapshot['queue_depth_before_flush_max']} "
+            "queue_depth_after_flush_max="
+            f"{snapshot['queue_depth_after_flush_max']} "
+            f"flush_batches={snapshot['flush_batches']} "
+            f"traffic_packets={snapshot['traffic_packets']} "
+            f"traffic_rows={snapshot['traffic_rows']} "
+            f"traffic_bytes={snapshot['traffic_bytes']} "
+            f"dns_rows={snapshot['dns_rows']} "
+            f"host_inserts={snapshot['host_inserts']} "
+            f"host_updates={snapshot['host_updates']} "
+            f"domain_updates={snapshot['domain_updates']} "
+            f"metric_updates={snapshot['metric_updates']} "
+            f"fallback_sync_writes={snapshot['fallback_sync_writes']} "
+            f"dropped_traffic_rows={snapshot['dropped_traffic_rows']} "
+            f"retention_runs={snapshot['retention_runs']} "
+            f"retention_purged_rows={snapshot['retention_purged_rows']}",
+            flush=True,
+        )
+
+    def get_async_perf_snapshot(self):
+        with self._state_lock:
+            snapshot = {
+                "packet_db_lock_wait_ms": round(self._packet_db_lock_wait_total_ms, 3),
+                "writer_db_lock_wait_ms": round(self._writer_db_lock_wait_total_ms, 3),
+                "writer_db_lock_hold_ms": round(self._writer_db_lock_hold_total_ms, 3),
+                "writer_db_lock_hold_max_ms": round(self._writer_lock_hold_lifetime_max_ms, 3),
+                "queue_depth": self._write_queue.qsize(),
+            }
+            self._packet_db_lock_wait_total_ms = 0.0
+            return snapshot
+
     def _flush_for_read(self):
         self._writer_flush_event.set()
         if self._writer_thread is not None and self._writer_thread.is_alive():
@@ -607,8 +1349,15 @@ class Database:
         with self._state_lock:
             self._pending_metrics[name] = self._pending_metrics.get(name, 0) + amount
 
+    def record_traffic_write_failure(self):
+        self._add_pending_metric("traffic_write_failures", 1)
+
     def _domain_exists(self, normalized_domain):
+        lock_wait_started_at = time.perf_counter()
         with self._lock:
+            lock_wait_ms = (time.perf_counter() - lock_wait_started_at) * 1000
+            with self._state_lock:
+                self._packet_db_lock_wait_total_ms += lock_wait_ms
             row = self.connection.execute(
                 """
                 SELECT 1
@@ -675,6 +1424,49 @@ class Database:
         self._ensure_writer_thread()
         return 1
 
+    def record_host_seen(self, ip_address, mac_address, timestamp):
+        if not self.async_writes:
+            if self.host_exists(ip_address):
+                return self.update_host_last_seen(ip_address, timestamp)
+            return self.add_host(ip_address, mac_address, timestamp, timestamp)
+
+        now = time.monotonic()
+        with self._state_lock:
+            if ip_address not in self._known_hosts:
+                self._known_hosts.add(ip_address)
+                self._pending_host_inserts[ip_address] = {
+                    "mac_address": mac_address,
+                    "first_seen": timestamp,
+                    "last_seen": timestamp,
+                }
+                self._host_update_deadlines[ip_address] = (
+                    now + self.HOST_UPDATE_DEBOUNCE_SECONDS
+                )
+                self._record_write_metrics(
+                    "hosts_added",
+                    self._estimate_bytes(ip_address, mac_address, timestamp, timestamp),
+                    time.perf_counter(),
+                )
+                self._ensure_writer_thread()
+                return 1
+
+            pending_insert = self._pending_host_inserts.get(ip_address)
+            if pending_insert is not None:
+                pending_insert["last_seen"] = timestamp
+                if mac_address and not pending_insert.get("mac_address"):
+                    pending_insert["mac_address"] = mac_address
+                self._ensure_writer_thread()
+                return 1
+
+            deadline = self._host_update_deadlines.get(ip_address)
+            self._pending_host_updates[ip_address] = timestamp
+            if deadline is None or now >= deadline:
+                self._host_update_deadlines[ip_address] = (
+                    now + self.HOST_UPDATE_DEBOUNCE_SECONDS
+                )
+            self._ensure_writer_thread()
+            return 1
+
     def get_host_by_ip(self, ip_address):
         with self._lock:
             return self.connection.execute(
@@ -699,32 +1491,28 @@ class Database:
         dst_port,
         packet_size,
     ):
+        normalized_src_port = self._normalize_traffic_port(src_port)
+        normalized_dst_port = self._normalize_traffic_port(dst_port)
         if not self.async_writes:
             started_at = time.perf_counter()
             with self._lock:
                 with self.connection:
-                    cursor = self.connection.execute(
-                        """
-                        INSERT INTO traffic (
-                            timestamp,
-                            src_ip,
-                            dst_ip,
-                            protocol,
-                            src_port,
-                            dst_port,
-                            packet_size
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            timestamp,
-                            src_ip,
-                            dst_ip,
-                            protocol,
-                            src_port,
-                            dst_port,
-                            packet_size,
-                        ),
+                    self._insert_traffic_rows_locked(
+                        [
+                            (
+                                timestamp,
+                                src_ip,
+                                dst_ip,
+                                protocol,
+                                normalized_src_port,
+                                normalized_dst_port,
+                                packet_size,
+                                1,
+                                packet_size,
+                                timestamp,
+                                timestamp,
+                            )
+                        ]
                     )
                     self._record_write_metrics(
                         "traffic_records_written",
@@ -739,21 +1527,20 @@ class Database:
                         ),
                         started_at,
                     )
-                    row_id = cursor.lastrowid
                     self._traffic_insert_counter += 1
 
             if self._traffic_insert_counter >= self.TRAFFIC_RETENTION_CHECK_INTERVAL:
                 self._traffic_insert_counter = 0
                 self.enforce_traffic_limit(Config.TRAFFIC_MAX_RECORDS)
-            return row_id
+            return None
         started_at = time.perf_counter()
         row = (
             timestamp,
             src_ip,
             dst_ip,
             protocol,
-            src_port,
-            dst_port,
+            normalized_src_port,
+            normalized_dst_port,
             packet_size,
         )
         self._record_write_metrics(
@@ -761,14 +1548,7 @@ class Database:
             self._estimate_bytes(*row),
             started_at,
         )
-        if not self._enqueue_write("traffic", row):
-            self._flush_pending_writes(
-                traffic_rows=[row],
-                dns_rows=[],
-                flush_domains=False,
-                flush_hosts=False,
-                flush_metrics=False,
-            )
+        self._enqueue_write("traffic", row)
         return None
 
     def create_alert(
@@ -905,7 +1685,9 @@ class Database:
         query_name,
         query_type,
         dns_rcode=None,
+        perf_stats=None,
     ):
+        perf_stats = perf_stats if perf_stats is not None else {}
         if not self.async_writes:
             normalized_domain = self._normalize_domain(query_name)
             started_at = time.perf_counter()
@@ -944,11 +1726,19 @@ class Database:
                         ),
                         started_at,
                     )
+                    perf_stats["dns_row_ms"] = perf_stats.get("dns_row_ms", 0.0) + (
+                        (time.perf_counter() - started_at) * 1000
+                    )
+                domain_started_at = time.perf_counter()
                 risk_result = self.upsert_domain(
                     normalized_domain,
                     timestamp,
                     client_ip=client_ip,
                     dns_server_ip=dns_server_ip,
+                    perf_stats=perf_stats,
+                )
+                perf_stats["domain_ms"] = perf_stats.get("domain_ms", 0.0) + (
+                    (time.perf_counter() - domain_started_at) * 1000
                 )
                 return {
                     "id": cursor.lastrowid,
@@ -976,6 +1766,9 @@ class Database:
             ),
             started_at,
         )
+        perf_stats["dns_row_ms"] = perf_stats.get("dns_row_ms", 0.0) + (
+            (time.perf_counter() - started_at) * 1000
+        )
         if not self._enqueue_write("dns", row):
             self._flush_pending_writes(
                 traffic_rows=[],
@@ -984,22 +1777,40 @@ class Database:
                 flush_hosts=False,
                 flush_metrics=False,
             )
+        domain_started_at = time.perf_counter()
         risk_result = self.upsert_domain(
             normalized_domain,
             timestamp,
             client_ip=client_ip,
             dns_server_ip=dns_server_ip,
+            perf_stats=perf_stats,
+        )
+        perf_stats["domain_ms"] = perf_stats.get("domain_ms", 0.0) + (
+            (time.perf_counter() - domain_started_at) * 1000
         )
         return {
             "id": None,
             "domain_risk": risk_result,
         }
 
-    def upsert_domain(self, domain, timestamp, client_ip=None, dns_server_ip=None):
+    def upsert_domain(
+        self,
+        domain,
+        timestamp,
+        client_ip=None,
+        dns_server_ip=None,
+        perf_stats=None,
+    ):
+        perf_stats = perf_stats if perf_stats is not None else {}
         normalized_domain = self._normalize_domain(domain)
+        risk_started_at = time.perf_counter()
         risk_result = self.analyze_domain_risk(normalized_domain)
+        perf_stats["domain_risk_ms"] = perf_stats.get("domain_risk_ms", 0.0) + (
+            (time.perf_counter() - risk_started_at) * 1000
+        )
         if not self.async_writes:
             with self._lock:
+                lookup_started_at = time.perf_counter()
                 existing_domain = self.connection.execute(
                     """
                     SELECT id
@@ -1008,9 +1819,13 @@ class Database:
                     """,
                     (normalized_domain,),
                 ).fetchone()
+                perf_stats["domain_lookup_ms"] = perf_stats.get("domain_lookup_ms", 0.0) + (
+                    (time.perf_counter() - lookup_started_at) * 1000
+                )
 
                 with self.connection:
                     if existing_domain:
+                        update_started_at = time.perf_counter()
                         self.connection.execute(
                             """
                             UPDATE domains
@@ -1025,8 +1840,12 @@ class Database:
                             last_seen=timestamp,
                             increment_existing=True,
                         )
+                        perf_stats["domain_write_ms"] = perf_stats.get("domain_write_ms", 0.0) + (
+                            (time.perf_counter() - update_started_at) * 1000
+                        )
                         return risk_result
 
+                    insert_started_at = time.perf_counter()
                     self.connection.execute(
                         """
                         INSERT INTO domains (domain, first_seen, last_seen, query_count)
@@ -1056,15 +1875,16 @@ class Database:
                     client_ip,
                     dns_server_ip,
                 )
+                perf_stats["domain_write_ms"] = perf_stats.get("domain_write_ms", 0.0) + (
+                    (time.perf_counter() - insert_started_at) * 1000
+                )
                 return risk_result
         should_create_alert = False
         with self._state_lock:
+            state_started_at = time.perf_counter()
             domain_state = self._pending_domain_updates.get(normalized_domain)
             if domain_state is None:
-                known_domain = self._known_domains.get(normalized_domain)
-                if known_domain is None:
-                    known_domain = self._domain_exists(normalized_domain)
-                is_new = not known_domain
+                is_new = normalized_domain not in self._known_domains
                 domain_state = {
                     "first_seen": timestamp,
                     "last_seen": timestamp,
@@ -1073,7 +1893,7 @@ class Database:
                     "is_new": is_new,
                 }
                 self._pending_domain_updates[normalized_domain] = domain_state
-                self._known_domains[normalized_domain] = True
+                self._known_domains.add(normalized_domain)
                 if is_new:
                     self._record_write_metrics(
                         "unique_domains_discovered",
@@ -1089,14 +1909,21 @@ class Database:
                 domain_state["last_seen"] = timestamp
                 domain_state["query_count"] += 1
                 domain_state["risk_result"] = risk_result
+            perf_stats["domain_state_ms"] = perf_stats.get("domain_state_ms", 0.0) + (
+                (time.perf_counter() - state_started_at) * 1000
+            )
 
         self._ensure_writer_thread()
         if should_create_alert:
+            alert_started_at = time.perf_counter()
             self._create_domain_risk_alert_if_needed(
                 risk_result,
                 timestamp,
                 client_ip,
                 dns_server_ip,
+            )
+            perf_stats["domain_alert_ms"] = perf_stats.get("domain_alert_ms", 0.0) + (
+                (time.perf_counter() - alert_started_at) * 1000
             )
         return risk_result
 
@@ -1376,6 +2203,26 @@ class Database:
             self._record_read_metrics("dashboard_queries_executed", [row], started_at)
             return row[0]
 
+    def count_traffic_packets(self):
+        self._flush_for_read()
+        with self._lock:
+            started_at = time.perf_counter()
+            row = self.connection.execute(
+                f"SELECT COALESCE(SUM({self._traffic_packet_count_sql()}), 0) FROM traffic"
+            ).fetchone()
+            self._record_read_metrics("dashboard_queries_executed", [row], started_at)
+            return int(row[0] or 0)
+
+    def count_traffic_bytes(self):
+        self._flush_for_read()
+        with self._lock:
+            started_at = time.perf_counter()
+            row = self.connection.execute(
+                f"SELECT COALESCE(SUM({self._traffic_byte_count_sql()}), 0) FROM traffic"
+            ).fetchone()
+            self._record_read_metrics("dashboard_queries_executed", [row], started_at)
+            return int(row[0] or 0)
+
     def get_traffic_count(self):
         return self.count_traffic()
 
@@ -1496,7 +2343,21 @@ class Database:
             started_at = time.perf_counter()
             rows = self.connection.execute(
                 """
-                SELECT timestamp, src_ip, dst_ip, protocol, src_port, dst_port, packet_size
+                SELECT
+                    timestamp,
+                    src_ip,
+                    dst_ip,
+                    protocol,
+                    NULLIF(src_port, -1) AS src_port,
+                    NULLIF(dst_port, -1) AS dst_port,
+                    packet_size,
+                    COALESCE(packet_count, 1) AS packet_count,
+                    CASE
+                        WHEN byte_count IS NULL OR byte_count <= 0 THEN COALESCE(packet_size, 0)
+                        ELSE byte_count
+                    END AS byte_count,
+                    COALESCE(first_seen, timestamp) AS first_seen,
+                    COALESCE(last_seen, timestamp) AS last_seen
                 FROM traffic
                 ORDER BY id DESC
                 LIMIT ?
@@ -1518,12 +2379,16 @@ class Database:
         self._flush_for_read()
         allowed_sort_columns = {
             "timestamp",
+            "first_seen",
+            "last_seen",
             "src_ip",
             "dst_ip",
             "protocol",
             "src_port",
             "dst_port",
             "packet_size",
+            "packet_count",
+            "byte_count",
             "service",
         }
         if sort_by not in allowed_sort_columns:
@@ -1537,7 +2402,7 @@ class Database:
         per_page = max(int(per_page), 1)
         offset = (page - 1) * per_page
 
-        service_expression = service_case_sql("dst_port")
+        service_expression = service_case_sql("NULLIF(dst_port, -1)")
         where_clause, params = self._build_traffic_where_clause(
             search,
             filters,
@@ -1547,13 +2412,20 @@ class Database:
         select_query = f"""
             SELECT
                 timestamp,
+                COALESCE(first_seen, timestamp) AS first_seen,
+                COALESCE(last_seen, timestamp) AS last_seen,
                 src_ip,
                 dst_ip,
                 protocol,
-                src_port,
-                dst_port,
+                NULLIF(src_port, -1) AS src_port,
+                NULLIF(dst_port, -1) AS dst_port,
                 {service_expression} AS service,
-                packet_size
+                packet_size,
+                COALESCE(packet_count, 1) AS packet_count,
+                CASE
+                    WHEN byte_count IS NULL OR byte_count <= 0 THEN COALESCE(packet_size, 0)
+                    ELSE byte_count
+                END AS byte_count
             FROM traffic
             {where_clause}
             ORDER BY {sort_by} {sort_order}, id DESC
@@ -1580,15 +2452,18 @@ class Database:
             "src_ip": "src_ip",
             "dst_ip": "dst_ip",
             "protocol": "protocol",
-            "src_port": "src_port",
-            "dst_port": "dst_port",
+            "src_port": "NULLIF(src_port, -1)",
+            "dst_port": "NULLIF(dst_port, -1)",
         }
         for key, column in filter_columns.items():
             value = filters.get(key)
             if value in (None, ""):
                 continue
             clauses.append(f"{column} = ?")
-            params.append(value)
+            if key in {"src_port", "dst_port"}:
+                params.append(int(value))
+            else:
+                params.append(value)
 
         if search:
             search_value = f"%{search}%"
@@ -1598,8 +2473,8 @@ class Database:
                     src_ip LIKE ?
                     OR dst_ip LIKE ?
                     OR protocol LIKE ?
-                    OR CAST(src_port AS TEXT) LIKE ?
-                    OR CAST(dst_port AS TEXT) LIKE ?
+                    OR CAST(NULLIF(src_port, -1) AS TEXT) LIKE ?
+                    OR CAST(NULLIF(dst_port, -1) AS TEXT) LIKE ?
                     OR {service_expression} LIKE ?
                 )
                 """
@@ -1794,7 +2669,21 @@ class Database:
             started_at = time.perf_counter()
             rows = self.connection.execute(
                 """
-                SELECT timestamp, src_ip, dst_ip, protocol, src_port, dst_port, packet_size
+                SELECT
+                    timestamp,
+                    src_ip,
+                    dst_ip,
+                    protocol,
+                    NULLIF(src_port, -1) AS src_port,
+                    NULLIF(dst_port, -1) AS dst_port,
+                    packet_size,
+                    COALESCE(packet_count, 1) AS packet_count,
+                    CASE
+                        WHEN byte_count IS NULL OR byte_count <= 0 THEN COALESCE(packet_size, 0)
+                        ELSE byte_count
+                    END AS byte_count,
+                    COALESCE(first_seen, timestamp) AS first_seen,
+                    COALESCE(last_seen, timestamp) AS last_seen
                 FROM traffic
                 WHERE src_ip = ?
                 ORDER BY id DESC
@@ -1851,8 +2740,13 @@ class Database:
         self._flush_for_read()
         with self._lock:
             metrics = self._get_metric_values()
+            traffic_record_count = self._count_table("traffic")
+            traffic_packet_count = self._count_traffic_packets_locked()
+            traffic_byte_count = self._count_traffic_bytes_locked()
             counts = {
-                "traffic": self._count_table("traffic"),
+                "traffic": traffic_record_count,
+                "traffic_packets": traffic_packet_count,
+                "traffic_bytes": traffic_byte_count,
                 "dns_queries": self._count_table("dns_queries"),
                 "domains": self._count_table("domains"),
                 "alerts": self._count_table("alerts"),
@@ -1867,6 +2761,7 @@ class Database:
             process_metrics = self._get_process_metrics()
             writes = {
                 "traffic_records_written": int(metrics.get("traffic_records_written", 0)),
+                "traffic_write_failures": int(metrics.get("traffic_write_failures", 0)),
                 "dns_queries_written": int(metrics.get("dns_queries_written", 0)),
                 "unique_domains_discovered": int(metrics.get("unique_domains_discovered", 0)),
                 "alerts_written": int(metrics.get("alerts_written", 0)),
@@ -1886,6 +2781,8 @@ class Database:
                     "size_bytes": database_size_bytes,
                     "size_mb": self._bytes_to_mb(database_size_bytes),
                     "traffic_records": counts["traffic"],
+                    "traffic_packets": counts["traffic_packets"],
+                    "traffic_bytes": counts["traffic_bytes"],
                     "dns_queries": counts["dns_queries"],
                     "unique_domains": counts["domains"],
                     "alerts": counts["alerts"],
@@ -1930,6 +2827,7 @@ class Database:
                 "retention": {
                     "traffic_max_records": Config.TRAFFIC_MAX_RECORDS,
                     "current_traffic_count": counts["traffic"],
+                    "current_packet_count": counts["traffic_packets"],
                     "traffic_buffer_percent": (
                         counts["traffic"] / Config.TRAFFIC_MAX_RECORDS * 100
                         if Config.TRAFFIC_MAX_RECORDS
@@ -1948,6 +2846,14 @@ class Database:
             memory_percent = round(process.memory_percent(), 2)
             thread_count = process.num_threads()
             create_time = process.create_time()
+            self._log_system_health_refresh(
+                process=process,
+                selection_source=_SENSOR_PROCESS_SELECTION_SOURCE,
+                raw_cpu_percent=raw_cpu_percent,
+                memory_rss_bytes=int(memory_info.rss),
+                thread_count=int(thread_count),
+                create_time=create_time,
+            )
         except (psutil.Error, OSError):
             return {
                 "available": False,
@@ -1978,37 +2884,247 @@ class Database:
 
     @staticmethod
     def _sensor_process():
-        global _SENSOR_PROCESS_HANDLE, _SENSOR_PROCESS_PID
+        global _SENSOR_PROCESS_HANDLE, _SENSOR_PROCESS_PID, _SENSOR_PROCESS_CREATE_TIME
+        global _SENSOR_PROCESS_SELECTION_SOURCE
 
         if _SENSOR_PROCESS_HANDLE is not None:
             try:
-                if _SENSOR_PROCESS_HANDLE.is_running():
+                if (
+                    _SENSOR_PROCESS_HANDLE.is_running()
+                    and _SENSOR_PROCESS_CREATE_TIME is not None
+                    and _SENSOR_PROCESS_HANDLE.create_time() == _SENSOR_PROCESS_CREATE_TIME
+                ):
+                    _SENSOR_PROCESS_SELECTION_SOURCE = "cached_process"
                     return _SENSOR_PROCESS_HANDLE
             except (psutil.Error, OSError):
                 _SENSOR_PROCESS_HANDLE = None
                 _SENSOR_PROCESS_PID = None
+                _SENSOR_PROCESS_CREATE_TIME = None
+                _SENSOR_PROCESS_SELECTION_SOURCE = None
+            else:
+                _SENSOR_PROCESS_HANDLE = None
+                _SENSOR_PROCESS_PID = None
+                _SENSOR_PROCESS_CREATE_TIME = None
+                _SENSOR_PROCESS_SELECTION_SOURCE = None
 
         windows_candidates = []
-        selected_info = None
+        matching_processes = []
 
         for process in psutil.process_iter(["pid", "cmdline", "exe", "name"]):
             try:
                 if os.name == "nt" and Database._is_windows_process_debug_candidate(process.info):
                     windows_candidates.append(Database._copy_process_info(process.info))
                 if Database._is_sensor_process_info(process.info):
-                    _SENSOR_PROCESS_HANDLE = process
-                    _SENSOR_PROCESS_PID = process.pid
-                    selected_info = Database._copy_process_info(process.info)
-                    _SENSOR_PROCESS_HANDLE.cpu_percent(interval=None)
-                    if os.name == "nt":
-                        Database._print_windows_sensor_process_debug(
-                            selected_info, windows_candidates
-                        )
-                    return _SENSOR_PROCESS_HANDLE
+                    matching_processes.append(process)
             except (psutil.Error, OSError):
                 continue
 
+        selected_process = None
+        selection_reason = "process_enumeration_fallback"
+        if os.name == "nt":
+            selected_process, service_selection_reason = Database._sensor_process_from_windows_service(
+                windows_candidates
+            )
+            if selected_process is not None:
+                selection_reason = service_selection_reason or "windows_service_lookup"
+
+        if selected_process is None and matching_processes:
+            selected_process = Database._select_sensor_process_candidate(
+                matching_processes
+            )
+
+        if selected_process is not None:
+            _SENSOR_PROCESS_HANDLE = selected_process
+            _SENSOR_PROCESS_PID = selected_process.pid
+            _SENSOR_PROCESS_CREATE_TIME = selected_process.create_time()
+            _SENSOR_PROCESS_SELECTION_SOURCE = selection_reason
+            _SENSOR_PROCESS_HANDLE.cpu_percent(interval=None)
+            if os.name == "nt":
+                Database._print_windows_sensor_process_debug(
+                    Database._copy_process_info(getattr(selected_process, "info", {}) or {
+                        "pid": selected_process.pid,
+                        "exe": getattr(selected_process, "exe", lambda: None)(),
+                        "cmdline": getattr(selected_process, "cmdline", lambda: [])(),
+                        "name": getattr(selected_process, "name", lambda: None)(),
+                    }),
+                    windows_candidates,
+                    selection_reason=selection_reason,
+                )
+            return _SENSOR_PROCESS_HANDLE
+
         raise psutil.NoSuchProcess(_SENSOR_PROCESS_PID or os.getpid())
+
+    @staticmethod
+    def _sensor_process_from_windows_service(candidate_infos):
+        win_service_get = getattr(psutil, "win_service_get", None)
+        if win_service_get is None:
+            return None, None
+        try:
+            service = win_service_get(_WINDOWS_SENSOR_SERVICE_NAME)
+            service_info = service.as_dict()
+            print(
+                "[SystemHealth] Windows service lookup: "
+                f"name={_WINDOWS_SENSOR_SERVICE_NAME} "
+                f"status={service_info.get('status')} "
+                f"pid={service_info.get('pid')}",
+                flush=True,
+            )
+        except (AttributeError, psutil.Error, OSError):
+            print(
+                "[SystemHealth] Windows service lookup failed for "
+                f"{_WINDOWS_SENSOR_SERVICE_NAME}",
+                flush=True,
+            )
+            return None, None
+
+        pid = service_info.get("pid")
+        status = str(service_info.get("status") or "").lower()
+        if not pid or status != "running":
+            return None, None
+
+        try:
+            root_process = psutil.Process(pid)
+            root_info = root_process.as_dict(attrs=["pid", "cmdline", "exe", "name"])
+            if Database._is_windows_process_debug_candidate(root_info):
+                candidate_infos.append(Database._copy_process_info(root_info))
+            root_process.info = root_info
+
+            matching_descendants = []
+            for descendant, depth in Database._walk_process_descendants(root_process):
+                try:
+                    info = descendant.as_dict(attrs=["pid", "cmdline", "exe", "name"])
+                    descendant.info = info
+                    descendant._service_tree_depth = depth
+                    if Database._is_windows_process_debug_candidate(info):
+                        candidate_infos.append(Database._copy_process_info(info))
+                    if Database._is_sensor_process_info(info):
+                        matching_descendants.append(descendant)
+                except (psutil.Error, OSError):
+                    continue
+
+            if matching_descendants:
+                return (
+                    Database._select_sensor_process_candidate(matching_descendants),
+                    "windows_service_child_worker",
+                )
+            if Database._is_sensor_process_info(root_info):
+                return root_process, "windows_service_lookup"
+        except (psutil.Error, OSError):
+            return None, None
+        return None, None
+
+    @staticmethod
+    def _walk_process_descendants(process):
+        descendants = []
+
+        def visit(node, depth):
+            try:
+                children = node.children()
+            except (psutil.Error, OSError):
+                return
+            if not isinstance(children, (list, tuple)):
+                return
+            for child in children:
+                descendants.append((child, depth))
+                visit(child, depth + 1)
+
+        visit(process, 1)
+        return descendants
+
+    def _log_system_health_refresh(
+        self,
+        process,
+        selection_source,
+        raw_cpu_percent,
+        memory_rss_bytes,
+        thread_count,
+        create_time,
+    ):
+        try:
+            exe_path = process.exe()
+        except (psutil.Error, OSError):
+            exe_path = None
+        try:
+            cmdline = process.cmdline()
+        except (psutil.Error, OSError):
+            cmdline = []
+        if not isinstance(cmdline, (list, tuple)):
+            cmdline = [str(cmdline)]
+        try:
+            parent = process.parent()
+        except (psutil.Error, OSError):
+            parent = None
+        try:
+            children = process.children()
+        except (psutil.Error, OSError):
+            children = []
+        if not isinstance(children, (list, tuple)):
+            children = []
+
+        parent_pid = None
+        parent_exe = None
+        if parent is not None:
+            try:
+                parent_pid = parent.pid
+                parent_exe = parent.exe()
+            except (psutil.Error, OSError):
+                parent_pid = getattr(parent, "pid", None)
+                parent_exe = None
+
+        child_pids = []
+        child_names = []
+        for child in children:
+            child_pids.append(getattr(child, "pid", None))
+            try:
+                child_names.append(child.name())
+            except (psutil.Error, OSError):
+                child_names.append(None)
+
+        print("[SystemHealth] Refresh sample:", flush=True)
+        print(f"[SystemHealth]   Selection source: {selection_source}", flush=True)
+        print(f"[SystemHealth]   PID: {process.pid}", flush=True)
+        print(f"[SystemHealth]   Executable path: {exe_path}", flush=True)
+        print(f"[SystemHealth]   Command line: {' '.join(cmdline)}", flush=True)
+        print(f"[SystemHealth]   Parent PID: {parent_pid}", flush=True)
+        print(f"[SystemHealth]   Parent executable: {parent_exe}", flush=True)
+        print(f"[SystemHealth]   Child PIDs: {child_pids}", flush=True)
+        print(f"[SystemHealth]   Child executable names: {child_names}", flush=True)
+        print(f"[SystemHealth]   Create time: {create_time}", flush=True)
+        print(f"[SystemHealth]   RSS bytes: {memory_rss_bytes}", flush=True)
+        print(
+            f"[SystemHealth]   RSS MB: {self._bytes_to_mb(memory_rss_bytes)}",
+            flush=True,
+        )
+        print(f"[SystemHealth]   Thread count: {thread_count}", flush=True)
+        print(f"[SystemHealth]   CPU percent raw: {raw_cpu_percent}", flush=True)
+
+    @staticmethod
+    def _select_sensor_process_candidate(processes):
+        def score(process):
+            info = getattr(process, "info", {}) or {}
+            cmdline = Database._normalized_cmdline(info)
+            exe = str(info.get("exe") or "").lower().replace("\\", "/")
+            exact_main = "excalibur/main.py" in cmdline
+            module_main = "-m excalibur.main" in cmdline
+            venv_python = "/.venv/" in exe or "\\.venv\\" in str(info.get("exe") or "")
+            cmdline_len = len(info.get("cmdline") or [])
+            depth = int(getattr(process, "_service_tree_depth", 0) or 0)
+            return (
+                depth,
+                1 if exact_main else 0,
+                1 if module_main else 0,
+                1 if venv_python else 0,
+                cmdline_len,
+                -int(info.get("pid") or 0),
+            )
+
+        for process in processes:
+            if not hasattr(process, "info"):
+                try:
+                    process.info = process.as_dict(attrs=["pid", "cmdline", "exe", "name"])
+                except (psutil.Error, OSError):
+                    process.info = {"pid": process.pid, "cmdline": [], "exe": None, "name": None}
+        return max(processes, key=score)
 
     @staticmethod
     def _is_sensor_process_info(info):
@@ -2050,8 +3166,13 @@ class Database:
         )
 
     @staticmethod
-    def _print_windows_sensor_process_debug(selected_info, candidate_infos):
+    def _print_windows_sensor_process_debug(
+        selected_info,
+        candidate_infos,
+        selection_reason="process_enumeration_fallback",
+    ):
         print("[SystemHealth] Selected sensor process on Windows:", flush=True)
+        print(f"[SystemHealth]   Selection reason: {selection_reason}", flush=True)
         print(f"[SystemHealth]   PID: {selected_info.get('pid')}", flush=True)
         print(f"[SystemHealth]   Executable path: {selected_info.get('exe')}", flush=True)
         print(
@@ -2129,20 +3250,19 @@ class Database:
 
     def reconcile_system_metrics(self):
         self._flush_for_read()
-        write_metric_tables = {
-            "traffic_records_written": "traffic",
-            "dns_queries_written": "dns_queries",
-            "unique_domains_discovered": "domains",
-            "alerts_written": "alerts",
-            "hosts_added": "hosts",
-        }
         with self._lock:
             metrics = self._get_metric_values()
             reconciled_values = {}
             with self.connection:
-                for metric_name, table_name in write_metric_tables.items():
+                metric_counts = {
+                    "traffic_records_written": self._count_traffic_packets_locked(),
+                    "dns_queries_written": self._count_table("dns_queries"),
+                    "unique_domains_discovered": self._count_table("domains"),
+                    "alerts_written": self._count_table("alerts"),
+                    "hosts_added": self._count_table("hosts"),
+                }
+                for metric_name, current_count in metric_counts.items():
                     current_metric = metrics.get(metric_name, 0)
-                    current_count = self._count_table(table_name)
                     reconciled_value = max(current_metric, current_count)
                     reconciled_values[metric_name] = reconciled_value
                     if current_metric < current_count:
@@ -2244,6 +3364,18 @@ class Database:
     def _count_table(self, table_name):
         return self.connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
 
+    def _count_traffic_packets_locked(self):
+        row = self.connection.execute(
+            f"SELECT COALESCE(SUM({self._traffic_packet_count_sql()}), 0) FROM traffic"
+        ).fetchone()
+        return int(row[0] or 0)
+
+    def _count_traffic_bytes_locked(self):
+        row = self.connection.execute(
+            f"SELECT COALESCE(SUM({self._traffic_byte_count_sql()}), 0) FROM traffic"
+        ).fetchone()
+        return int(row[0] or 0)
+
     def _get_journal_mode(self):
         return self.connection.execute("PRAGMA journal_mode").fetchone()[0].upper()
 
@@ -2295,11 +3427,72 @@ class Database:
         with log_path.open("a", encoding="utf-8") as log_file:
             log_file.write(f"{domain}\n")
 
+    def _append_new_domains(self, domains):
+        unique_domains = list(dict.fromkeys(domains))
+        if not unique_domains:
+            return
+        log_path = self.runtime_data_dir / "domains.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as log_file:
+            for domain in unique_domains:
+                log_file.write(f"{domain}\n")
+
+    @staticmethod
+    def _pop_pending_items_locked(mapping, limit):
+        if not mapping:
+            return {}
+        if limit is None or limit <= 0 or len(mapping) <= limit:
+            items = dict(mapping)
+            mapping.clear()
+            return items
+        keys = list(islice(mapping.keys(), limit))
+        items = {key: mapping.pop(key) for key in keys}
+        return items
+
+    def get_async_writer_benchmark_stats(self):
+        with self._state_lock:
+            flush_count = self._writer_transaction_lifetime_count
+            traffic_flush_count = self._writer_traffic_exec_lifetime_count
+            return {
+                "flush_count": flush_count,
+                "lock_hold_total_ms": round(self._writer_lock_hold_lifetime_total_ms, 3),
+                "lock_hold_max_ms": round(self._writer_lock_hold_lifetime_max_ms, 3),
+                "lock_hold_avg_ms": round(
+                    self._writer_lock_hold_lifetime_total_ms / flush_count, 3
+                )
+                if flush_count
+                else 0.0,
+                "queue_high_watermark": self._writer_queue_high_watermark,
+                "final_queue_depth": self._write_queue.qsize(),
+                "dropped_rows_total": self._writer_overflow_drop_lifetime_total,
+                "domain_log_total_ms": round(self._writer_domain_log_lifetime_total_ms, 3),
+                "traffic_packet_events_total": self._writer_flushed_traffic_lifetime_total,
+                "traffic_rows_total": self._writer_inserted_traffic_row_lifetime_total,
+                "traffic_bytes_total": self._writer_flushed_traffic_bytes_lifetime_total,
+                "dns_rows_total": self._writer_flushed_dns_lifetime_total,
+                "domain_updates_total": self._writer_flushed_domain_lifetime_total,
+                "traffic_exec_total_ms": round(self._writer_traffic_exec_lifetime_total_ms, 3),
+                "traffic_exec_max_ms": round(self._writer_traffic_exec_lifetime_max_ms, 3),
+                "traffic_exec_avg_ms": round(
+                    self._writer_traffic_exec_lifetime_total_ms / traffic_flush_count,
+                    3,
+                )
+                if traffic_flush_count
+                else 0.0,
+                "retention_total_ms": round(self._retention_lifetime_total_ms, 3),
+                "retention_max_ms": round(self._retention_lifetime_max_ms, 3),
+                "fallback_sync_writes": self._writer_fallback_sync_lifetime_total,
+            }
+
     def close(self):
         if self._writer_thread is not None and self._writer_thread.is_alive():
             self._writer_stop_event.set()
             self._writer_flush_event.set()
             self._writer_thread.join(timeout=5)
+        if self._maintenance_thread is not None and self._maintenance_thread.is_alive():
+            self._maintenance_stop_event.set()
+            self._maintenance_wake_event.set()
+            self._maintenance_thread.join(timeout=5)
         self._flush_pending_writes(
             traffic_rows=[],
             dns_rows=[],
@@ -2307,5 +3500,6 @@ class Database:
             flush_hosts=True,
             flush_metrics=True,
         )
+        self._run_deferred_retention_if_idle(force=True)
         with self._lock:
             self.connection.close()

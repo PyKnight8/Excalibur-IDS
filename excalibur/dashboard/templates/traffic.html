@@ -46,13 +46,17 @@
       <tr>
         {% for column, label in [
           ('timestamp', 'Timestamp'),
+          ('first_seen', 'First Seen'),
+          ('last_seen', 'Last Seen'),
           ('src_ip', 'Source IP'),
           ('dst_ip', 'Destination IP'),
           ('protocol', 'Protocol'),
           ('src_port', 'Source Port'),
           ('dst_port', 'Destination Port'),
           ('service', 'Service'),
-          ('packet_size', 'Packet Size')
+          ('packet_size', 'Packet Size'),
+          ('packet_count', 'Packet Count'),
+          ('byte_count', 'Byte Count')
         ] %}
         <th class="{% if sort_by == column %}active-sort{% endif %}">
           <a class="sort-link {% if sort_by == column %}active{% endif %}" href="{{ sort_urls[column] }}">
@@ -65,10 +69,12 @@
     </thead>
     <tbody>
       {% for entry in traffic_entries %}
-      {% set protocol = entry.protocol|lower %}
-      {% set protocol_class = 'protocol-' ~ protocol if protocol in ['tcp', 'udp', 'dns', 'icmp'] else 'protocol-default' %}
+        {% set protocol = entry.protocol|lower %}
+        {% set protocol_class = 'protocol-' ~ protocol if protocol in ['tcp', 'udp', 'dns', 'icmp'] else 'protocol-default' %}
       <tr>
         <td>{{ entry.timestamp|local_time }}</td>
+        <td>{{ entry.first_seen|local_time }}</td>
+        <td>{{ entry.last_seen|local_time }}</td>
         <td>{{ entry.src_ip }}</td>
         <td>{{ entry.dst_ip }}</td>
         <td><span class="badge badge-protocol {{ protocol_class }}">{{ entry.protocol }}</span></td>
@@ -76,10 +82,12 @@
         <td>{{ "" if entry.dst_port is none else entry.dst_port }}</td>
         <td>{{ entry.service }}</td>
         <td>{{ entry.packet_size }}</td>
+        <td>{{ entry.packet_count }}</td>
+        <td>{{ entry.byte_count }}</td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="8" class="text-muted text-center">No traffic entries found.</td>
+        <td colspan="11" class="text-muted text-center">No traffic entries found.</td>
       </tr>
       {% endfor %}
     </tbody>
